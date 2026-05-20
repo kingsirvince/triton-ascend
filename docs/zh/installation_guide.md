@@ -4,7 +4,7 @@
 - **基于Docker镜像快速搭建**：直接使用Triton-Ascend发布的开箱即用的镜像，快速构筑开发环境。请直接按[OVERVIEW.zh.md](../../docker/OVERVIEW.zh.md)操作；
 - **基于pip安装**：直接尝试使用TA的pip包选择此项。请先前往下一步<a href="#env-prepare">环境准备</a>完成前置配置，再进行pip安装操作；
 - **基于源码安装**：基于TA的开发者选择此项。请先前往下一步<a href="#env-prepare">环境准备</a>完成前置配置，再选择<a href="#auto-code-base">快速安装</a>或<a href="#hand-code-base">手动安装</a>其中一种方式操作；
-- **基于Docker安装**：无需环境准备，可直接跳转至<a href="#docker-build">基于Docker构建</a>进行操作
+- **基于Dockerfile安装**：无需环境准备，可直接跳转至<a href="#docker-build">基于Dockerfile安装</a>进行操作
 
 ## 基于Docker镜像快速安装
 
@@ -15,6 +15,7 @@
 | 昇腾910b   | Atlas 800T A2、Atlas 900 A2 PoD |  3.2.1-910b-ubuntu22.04-py3.11 |
 | 昇腾A3     | Atlas 800T A3                 | 3.2.1-a3-ubuntu22.04-py3.11|
 | 昇腾950    | 950PR系列                       | 3.2.1-a3-ubuntu22.04-py3.11|
+
 说明：更多镜像参见[OVERVIEW.zh.md](../../docker/OVERVIEW.zh.md)
 ### 获取镜像
 
@@ -307,7 +308,7 @@ triton-ascend/CMakeLists.txt
 
 <a id="docker-build"></a>
 
-### 基于Docker安装
+### 基于Dockerfile安装
 
 我们提供了Dockerfile帮助您安装Docker环境镜像。构建过程使用`quay.io/ascend/cann`预构建镜像作为基础镜像，跳过CANN安装步骤，显著加快构建速度。
 
