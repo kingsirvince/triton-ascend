@@ -111,10 +111,10 @@ The preceding environment variable configurations take effect only in the curren
 
 #### Installing torch_npu
 
-The current torch_npu version is 2.7.1.
+The current torch_npu version is 2.7.1.post4.
 
 ```bash
-pip install torch_npu==2.7.1
+pip install torch_npu==2.7.1.post4
 ```
 
 Note: If `ERROR: No matching distribution found for torch==2.7.1+cpu` is displayed, you can manually install Torch and then install torch_npu.

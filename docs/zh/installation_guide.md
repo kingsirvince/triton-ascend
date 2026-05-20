@@ -110,10 +110,10 @@ docker exec -it triton-ascend_container bash
 
 #### 安装torch_npu
 
-当前配套的 torch_npu 版本为 2.7.1。
+当前配套的 torch_npu 版本为 2.7.1.post4。
 
 ```bash
-pip install torch_npu==2.7.1
+pip install torch_npu==2.7.1.post4
 ```
 
 注：如果出现报错`ERROR: No matching distribution found for torch==2.7.1+cpu`，可以尝试手动安装torch后再安装torch_npu。
