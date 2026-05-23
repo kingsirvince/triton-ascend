@@ -62,6 +62,6 @@ A: PR 的 CI 检查包括：编码安全与规范检查、开源片段检查、�
 
 ## 6. 性能调优
 
-**Q: 有没有性能分析工具（profiler）可以使用？**
+**Q: 有没有性能分析的工具（profiler）可以使用？**
 
-A: 有集成性能分析工具（profiler），请参考 [算子性能调优方法](./debug_guide/profiling.md)
+A: 有集成性能分析的工具（profiler），请参考 [算子性能调优方法](./debug_guide/profiling.md)
