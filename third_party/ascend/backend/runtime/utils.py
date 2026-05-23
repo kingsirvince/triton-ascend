@@ -48,6 +48,7 @@ def _init_npu_params():
     if target.arch.startswith("Ascend910_95") or target.arch.startswith("Ascend950"):
         ub_size_in_kbytes = 256
         rf_size_in_kbytes = 128
+        print(f"ub_size_in_kbytes")
         print(f"rf_size_in_kbytes")
 
     _cached_params = {
