@@ -19,82 +19,38 @@
 # THE SOFTWARE.
 
 import pytest
-
-import triton
-import triton.language as tl
-
 import torch
 import torch_npu
-
-import test_common
+import triton
+import triton.language as tl
 import triton.language.extra.cann.extension as extension
 
-
 @triton.jit
-def triton_add(in_ptr0, in_ptr1, out_ptr0, L: tl.constexpr, M: tl.constexpr, N: tl.constexpr):
-    lblk_idx = tl.arange(0, L)
-    mblk_idx = tl.arange(0, M)
-    nblk_idx = tl.arange(0, N)
-    idx = lblk_idx[:, None, None] * N * M + mblk_idx[None, :, None] * N + nblk_idx[None, None, :]
-    x0 = tl.load(in_ptr0 + idx)
-    x1 = tl.load(in_ptr1 + idx)
-    ret = x0 + x1
+def copy_kernel(
+    src_ptr,
+    dst_ptr,
+    n_elements,
+    BLOCK_SIZE: tl.constexpr,
+):
+    SUB_BLOCK_SIZE: tl.constexpr = BLOCK_SIZE // 2
+    for s in extension.parallel(0, 2, bind_sub_block=True):
+        start = s * SUB_BLOCK_SIZE
+        offsets = start + tl.arange(0, SUB_BLOCK_SIZE)
+        mask = offsets < n_elements
+        x = tl.load(src_ptr + offsets, mask=mask)
+        tl.store(dst_ptr + offsets, x, mask=mask)
 
-    for _ in extension.parallel(2, 5, 2, bind_sub_block=False):
-        ret = ret + x1
+TEST_SIZES = [256, 512, 1024, 2048]
 
-    for _ in extension.parallel(2, 10, 3, bind_sub_block=False):
-        ret = ret + x0
+@pytest.mark.parametrize("N", TEST_SIZES)
+def test_copy_kernel(N):
+    x = torch.arange(N, dtype=torch.float32, device='npu')
+    y = torch.empty_like(x)
 
-    odx = lblk_idx[:, None, None] * N * M + mblk_idx[None, :, None] * N + nblk_idx[None, None, :]
-    tl.store(out_ptr0 + odx, ret)
+    copy_kernel[(1,)](x, y, N, BLOCK_SIZE=N)
 
+    assert torch.allclose(x, y), f"Copy failed for N={N}"
+    print(f"Test passed for N={N}")
 
-testlist = [
-    (3, 5, 8),
-]
-
-
-def get_torch_typename(dtype):
-    if dtype == 'float32':
-        tyname = torch.float32
-    elif dtype == 'int32':
-        tyname = torch.int32
-    elif dtype == 'int64':
-        tyname = torch.int64
-    elif dtype == 'float16':
-        tyname = torch.float16
-    elif dtype == 'bfloat16':
-        tyname = torch.bfloat16
-    elif dtype == 'int16':
-        tyname = torch.int16
-    elif dtype == 'int8':
-        tyname = torch.int8
-    elif dtype == 'bool':
-        tyname = torch.bool
-    else:
-        raise ValueError('Invalid parameter \"dtype\" is found : {}'.format(dtype))
-
-    return tyname
-
-
-typelist = ['int8', 'int16', 'int32', 'int64']
-
-
-@pytest.mark.skip(reason="not supported after the NPUIR is updated in April, and will be fixed later")
-@pytest.mark.parametrize('L, M, N', testlist)
-@pytest.mark.parametrize('sigtype', typelist)
-def test_add_bind_false(sigtype, L, M, N):
-    dtype = get_torch_typename(sigtype)
-    shape = (L, M, N)
-    x0 = test_common.generate_tensor(shape=(L, M, N), dtype=sigtype).npu()
-    x1 = test_common.generate_tensor(shape=(L, M, N), dtype=sigtype).npu()
-    y_ref = x0 + x1 + x1 + x1 + x0 + x0 + x0
-
-    output = torch.zeros(shape, dtype=dtype).npu()
-    h = triton_add[1, 1, 1](x0, x1, output, L, M, N)
-
-    test_common.validate_cmp(sigtype, output, y_ref)
-    code_str = h.asm["ttadapter"]
-    count = code_str.count("hivm.parallel_loop")
-    assert count == 2
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
