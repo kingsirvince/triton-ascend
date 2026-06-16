@@ -80,12 +80,10 @@ CONSTRAINTS = {
     },
     "triton.language.arange": {
         "constraints": [
-            "DataType: Ascend does not support int32 (hardware limitation).",
-            "start和end必须大于等于0",
-            "end - start < 1048576 (TRITON_MAX_TENSOR_NUMEL)",
-            "start和end必须是编译时常量（tl.constexpr）",
-            "``output_type`` (Ascend extension): Ascend输出类型为uint16，GPU输出类型为int32",
-            "``relaxed_requirement`` (Ascend extension): CUDA要求range=(end-start)必须为2的幂次方，Ascend无此要求",
+            "Arguments must be tl.constexpr of uint or int type (int64 not supported).",
+            "start and end must be greater than or equal to 0.",
+            "end - start < 1048576 (TRITON_MAX_TENSOR_NUMEL), applicable to both NV and Ascend.",
+            "``relaxed_requirement`` (Ascend extension): CUDA requires range=(end-start) to be a power of 2, Ascend has no such requirement.",
         ],
         "example":
         "triton.language.arange",
@@ -108,8 +106,8 @@ CONSTRAINTS = {
     },
     "triton.language.associative_scan": {
         "constraints": [
-            "DataType: Ascend does not support uint16, uint32, uint64 (hardware limitation).",
-            "reverse=True要求tl.load加载数据时对齐，不能使用mask过滤多余数据索引",
+            "DataType: Ascend A2/A3 does not support uint16, uint32, uint64 (hardware limitation).",
+            "reverse=True requires alignment when loading data with tl.load, and mask cannot be used to filter redundant data indices",
         ],
         "example":
         "triton.language.associative_scan",
@@ -208,8 +206,8 @@ CONSTRAINTS = {
     },
     "triton.language.cat": {
         "constraints": [
-            "DataType: Ascend does not support uint16, uint32, uint64 (hardware limitation).",
-            "``can_reorder``: Ascend和GPU都只支持can_reorder=True",
+            "DataType: Ascend A2/A3 does not support uint16, uint32, uint64 (hardware limitation).",
+            "``can_reorder``: Both Ascend and GPU only support can_reorder=True",
         ],
         "example":
         "triton.language.cat",
@@ -257,15 +255,19 @@ CONSTRAINTS = {
     },
     "triton.language.cumprod": {
         "constraints": [
-            "DataType: Ascend does not support uint16, uint32, uint64 (hardware limitation).",
+            "DataType: Ascend A2/A3 does not support uint16, uint32, uint64 (hardware limitation).",
+            "reverse=True requires alignment when loading data with tl.load, and mask cannot be used to filter redundant data indices",
         ],
-        "example": "triton.language.cumprod",
+        "example":
+        "triton.language.cumprod",
     },
     "triton.language.cumsum": {
         "constraints": [
-            "DataType: Ascend does not support uint16, uint32, uint64 (hardware limitation).",
+            "DataType: Ascend A2/A3 does not support uint16, uint32, uint64 (hardware limitation).",
+            "reverse=True requires alignment when loading data with tl.load, and mask cannot be used to filter redundant data indices",
         ],
-        "example": "triton.language.cumsum",
+        "example":
+        "triton.language.cumsum",
     },
     "triton.language.debug_barrier": {
         "example": "triton.language.debug_barrier",
@@ -463,7 +465,7 @@ CONSTRAINTS = {
     },
     "triton.language.full": {
         "constraints": [
-            "DataType: Ascend does not support uint16, uint32, uint64 (hardware limitation).",
+            "DataType: Ascend A2/A3 does not support uint16, uint32, uint64 (hardware limitation).",
         ],
         "example": "triton.language.full",
     },
@@ -907,13 +909,13 @@ CONSTRAINTS = {
     },
     "triton.language.zeros": {
         "constraints": [
-            "DataType: Ascend does not support uint16, uint32, uint64 (hardware limitation).",
+            "DataType: Ascend A2/A3 does not support uint16, uint32, uint64 (hardware limitation).",
         ],
         "example": "triton.language.zeros",
     },
     "triton.language.zeros_like": {
         "constraints": [
-            "DataType: Ascend does not support uint16, uint32, uint64 (hardware limitation).",
+            "DataType: Ascend A2/A3 does not support uint16, uint32, uint64 (hardware limitation).",
         ],
         "example": "triton.language.zeros_like",
     },
