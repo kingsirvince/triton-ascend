@@ -166,7 +166,7 @@ void triton::UseAnalysis::visitOperation(Operation *op,
       .Case<hivm::CopyOp>([&](auto copyOp) {
         propagateUse(operands[0], UseType::DataUse);
       })
-      .Case<hivm::CustomOp>([&](auto customOp) {
+      .Case<hivm::CustomOp, hivm::CustomMacroOp>([&](auto customOp) {
         for (auto operand : operands) {
           propagateUse(operand, UseType::MixUse);
         }
@@ -558,6 +558,11 @@ LogicalResult triton::runUseAnalysis(triton::FuncOp &funcOp) {
   });
   // hivm.custom present library call, shouldn't be metause
   funcOp.walk([&](hivm::CustomOp op) {
+    if (isMetaUse(op)) {
+      op->removeAttr("MetaUse");
+    }
+  });
+  funcOp.walk([&](hivm::CustomMacroOp op) {
     if (isMetaUse(op)) {
       op->removeAttr("MetaUse");
     }
