@@ -1376,12 +1376,31 @@ static int processDepVal(Value depVal, mlir::scf::ForOp mainLoopForOp, BufferMap
 // and replace depVal usage in those consumers with the new linalg::FillOp result.
 // Skips the normal multi-buffer (alloc + hivm.copy + scf.if + to_tensor) path
 // because cloning is cheaper for this pattern.
+//
+// When linalg.fill's `ins` operand's defining op lives in the same parentOp as
+// the tensor::EmptyOp (i.e. it is producer-side and not yet across blocks),
+// clone that defining op together so the cloned fill's `ins` references the
+// clone instead of leaving a cross-block reference.
 static int cloneEmptyFillToConsumers(Value depVal, int producerId,
                                      DenseMap<Value, SmallVector<Operation *>> &depUserMap,
                                      OpBuilder &builder)
 {
     auto fillOp = cast<linalg::FillOp>(depVal.getDefiningOp());
     auto origEmpty = cast<tensor::EmptyOp>(fillOp.getOutputs()[0].getDefiningOp());
+
+    // Collect the `ins` operands whose defining op shares the parentOp with the
+    // tensor::EmptyOp. These will be cloned together with empty+fill so the
+    // cloned fill's `ins` becomes a local reference instead of a cross-block one.
+    SmallVector<Value> insToClone;
+    Operation *emptyParent = origEmpty->getParentOp();
+    for (Value insVal : fillOp.getInputs()) {
+        Operation *insDef = insVal.getDefiningOp();
+        if (!insDef)
+            continue;
+        if (insDef->getParentOp() != emptyParent)
+            continue;
+        insToClone.push_back(insVal);
+    }
 
     auto userIt = depUserMap.find(depVal);
     if (userIt == depUserMap.end())
@@ -1424,6 +1443,16 @@ static int cloneEmptyFillToConsumers(Value depVal, int producerId,
         // operand is rewired to point at the cloned empty.
         mapper.map(origEmpty->getResult(0), newEmpty->getResult(0));
 
+        // Clone the `ins` defining ops that share the empty's parentOp, and
+        // pre-register their value mapping so the cloned fill uses the cloned
+        // scalar instead of leaving a cross-block reference.
+        for (Value insVal : insToClone) {
+            Operation *insDef = insVal.getDefiningOp();
+            Operation *newIns = builder.clone(*insDef, mapper);
+            newIns->setAttr(kBlockId, builder.getI32IntegerAttr(userBlockId));
+            mapper.map(insVal, newIns->getResult(0));
+        }
+
         // Clone linalg::FillOp and tag with consumer's block_id
         Operation *newFill = builder.clone(*fillOp, mapper);
         newFill->setAttr(kBlockId, builder.getI32IntegerAttr(userBlockId));
@@ -1435,6 +1464,53 @@ static int cloneEmptyFillToConsumers(Value depVal, int producerId,
         }
     }
 
+    return 0;
+}
+
+// First pass: clone tensor::EmptyOp + linalg::FillOp patterns to each
+// consumer block. Runs BEFORE the rest of dep collection because cloning
+// the fill can introduce fresh cross-block references (e.g. the cloned
+// fill's `ins` chain may now reach a producer-side tensor that needs
+// multi-buffering), and the second pass needs to see them.
+//
+// Returns 0 on success, -1 on failure.
+static int cloneEmptyFillsInBlocks(scf::ForOp mainLoopForOp, DenseMap<Value, InnerBlockInfo> &blocks,
+                                   DenseMap<Value, SmallVector<Value>> &depValueMap,
+                                   DenseMap<Value, SmallVector<Operation *>> &depUserMap, OpBuilder &globalBuilder)
+{
+    SmallVector<Operation *> seenOps;
+
+    for (auto &blockPair : blocks) {
+        auto depIt = depValueMap.find(blockPair.first);
+        if (depIt == depValueMap.end())
+            continue;
+
+        // Walk the dep list carefully: cloneEmptyFillToConsumers mutates
+        // depUserMap (via replaceUsesOfWith) but does not invalidate the
+        // depValueMap iterator (no insert/erase of depValueMap). We just
+        // dedupe by defining op to avoid re-processing the same fill.
+        for (Value depVal : depIt->second) {
+            Operation *defOp = depVal.getDefiningOp();
+            if (!defOp || llvm::is_contained(seenOps, defOp))
+                continue;
+
+            if (!isEmptyFillPattern(depVal))
+                continue;
+
+            // Skip if parentOp is not the main_loop forOp (clone logic
+            // currently expects the empty/fill to be inside main_loop).
+            if (defOp->getParentOp() != mainLoopForOp.getOperation())
+                continue;
+
+            auto producerId = getOpBlockId(defOp);
+            if (!producerId.has_value())
+                continue;
+
+            seenOps.push_back(defOp);
+            if (cloneEmptyFillToConsumers(depVal, *producerId, depUserMap, globalBuilder) != 0)
+                return -1;
+        }
+    }
     return 0;
 }
 
@@ -1473,6 +1549,12 @@ static int processTensorDependencies(mlir::scf::ForOp mainLoopForOp, DenseMap<Va
             if (parentOp != mainLoopForOp.getOperation())
                 continue;
 
+            // The empty+fill pattern has already been cloned by
+            // cloneEmptyFillsInBlocks (run before dep collection). Skip
+            // any remaining occurrences here.
+            if (isEmptyFillPattern(depVal))
+                continue;
+
             auto userIt = depUserMap.find(depVal);
             if (userIt == depUserMap.end())
                 continue;
@@ -1494,15 +1576,6 @@ static int processTensorDependencies(mlir::scf::ForOp mainLoopForOp, DenseMap<Va
             }
             if (allUsersSameBlock)
                 continue;
-
-            // Special pattern: linalg.fill outs(tensor::EmptyOp) - clone the
-            // empty+fill pair to each consumer's block instead of allocating
-            // a multi-buffer.
-            if (isEmptyFillPattern(depVal)) {
-                if (cloneEmptyFillToConsumers(depVal, *producerId, depUserMap, globalBuilder) != 0)
-                    return -1;
-                continue; // skip normal multi-buffer path
-            }
 
             // Process cross-block dependency with double buffering
             if (processDepVal(depVal, mainLoopForOp, bufferMap, depUserMap, globalBuilder, *producerId, groupId) != 0)
@@ -1570,9 +1643,39 @@ static int addInnerMultiBuffer(mlir::scf::ForOp mainLoopForOp, OpBuilder &builde
     // Break tensor-rooted cross-block scalar dependencies before collecting deps
     rematerializeTensorRootedScalarDeps(mainLoopForOp);
 
+    OpBuilder globalBuilder(mainLoopForOp.getContext());
+
+    // First pass: clone tensor::EmptyOp + linalg::FillOp patterns into each
+    // consumer's block. The cloned fill's `ins` chain can introduce fresh
+    // cross-block references (e.g. a producer-side tensor referenced by the
+    // cloned tensor.extract) that need multi-buffering. To avoid missing those
+    // deps, we do dep collection in two phases:
+    //   Phase 1 (initial): collect deps, build user map, then clone.
+    //   Phase 2 (re-collect): re-run collectInnerBlockInfo / buildDepUserMap
+    //                        so the new cross-block refs (created by Phase 1's
+    //                        clones) are visible to processTensorDependencies.
     DenseMap<Value, InnerBlockInfo> blocks;
     DenseMap<Value, SmallVector<Value>> depValueMap;
     SmallVector<Operation *> allOps;
+    if (collectInnerBlockInfo(mainLoopForOp, blocks, depValueMap, allOps) != 0)
+        return -1;
+
+    if (blocks.empty())
+        return -1;
+
+    // Phase 1: build initial depUserMap and clone empty+fill patterns. We use
+    // a fresh user map built from the initial allOps so the clone can find
+    // consumer-block users; the cloned fills will rewrite those users' uses.
+    DenseMap<Value, SmallVector<Operation *>> initialDepUserMap = buildDepUserMap(blocks, allOps, depValueMap);
+    if (cloneEmptyFillsInBlocks(mainLoopForOp, blocks, depValueMap, initialDepUserMap, globalBuilder) != 0)
+        return -1;
+
+    // Phase 2: re-collect deps now that cloned ops have created new
+    // cross-block references. depValueMap and allOps are cleared inside
+    // collectInnerBlockInfo, so we re-discover everything from scratch.
+    blocks.clear();
+    depValueMap.clear();
+    allOps.clear();
     if (collectInnerBlockInfo(mainLoopForOp, blocks, depValueMap, allOps) != 0)
         return -1;
 
@@ -1593,7 +1696,6 @@ static int addInnerMultiBuffer(mlir::scf::ForOp mainLoopForOp, OpBuilder &builde
 
     auto scalarValueList = collectScalarDeps(depValueMap, depUserMap);
 
-    OpBuilder globalBuilder(mainLoopForOp.getContext());
     markScalarDeps(scalarValueList, depUserMap, globalBuilder, 1);
 
     if (processTensorDependencies(mainLoopForOp, blocks, depValueMap, depUserMap, bufferMap, globalBuilder, groupId) !=
