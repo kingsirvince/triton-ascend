@@ -94,10 +94,9 @@ static Operation *cloneOpWithMapping(Operation *op,
     llvm::DenseMap<Value, Value> &valueMap)
 {
   IRMapping mapper;
-  for (auto result : op->getResults()) {
-    if (valueMap.count(result)) {
-      mapper.map(result, valueMap[result]);
-    }
+  // Populate mapper with ALL previously cloned values (not just the current op's results). 
+  for (const auto &entry : valueMap) {
+    mapper.map(entry.first, entry.second);
   }
 
   Operation *cloned = builder.clone(*op, mapper);
