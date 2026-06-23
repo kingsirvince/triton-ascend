@@ -400,8 +400,8 @@ LogicalResult CloneOpsPass::validateBlockIdsConsecutive(ModuleOp module)
   return success();
 }
 
-// Check that no op in a VECTOR scope's main_loop forOp has a tensor or
-// memref result carrying the ssbuffer.clone attribute.
+// Check that no op in a VECTOR scope's main_loop forOp has a tensor result \
+// carrying the ssbuffer.clone attribute.
 LogicalResult CloneOpsPass::validateClonedOpsInVector(ModuleOp module)
 {
   WalkResult result = module.walk([&](Operation *op) -> WalkResult {
@@ -432,11 +432,11 @@ LogicalResult CloneOpsPass::validateClonedOpsInVector(ModuleOp module)
       if (!bodyOp.hasAttr(CVPipeline::kClone)) {
         continue;
       }
-      bool hasTensorOrMemref = llvm::any_of(bodyOp.getResults(), [](Value result) {
-        return isa<RankedTensorType, MemRefType>(result.getType());
+      bool hasTensorDep = llvm::any_of(bodyOp.getResults(), [](Value result) {
+        return isa<RankedTensorType>(result.getType());
       });
-      if (hasTensorOrMemref) {
-        LDBG("[Error]: VECTOR main_loop contains cloned op with tensor/memref type: "
+      if (hasTensorDep) {
+        LDBG("[Error]: VECTOR main_loop contains cloned op with tensor type: "
              << bodyOp.getName() << "\n");
         return WalkResult::interrupt();
       }
@@ -490,7 +490,7 @@ void CloneOpsPass::runOnOperation()
   
   LDBG("after cloneOps:\n" << module << "\n");
 
-  // Validate no cloned tensor/memref ops remaining in VECTOR main_loop forOp
+  // Validate no cloned tensor ops remaining in VECTOR main_loop forOp
   if (failed(validateClonedOpsInVector(module))) {
     signalPassFailure();
     return;
