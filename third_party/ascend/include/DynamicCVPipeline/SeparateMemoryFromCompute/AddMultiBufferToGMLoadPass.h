@@ -63,6 +63,9 @@ private:
 // Create the pass
 std::unique_ptr<OperationPass<ModuleOp>> createAddMultiBufferToGMLoadPass();
 
+// Register the pass so it is available as --gm-load-multi-buffer on the command line
+void registerAddMultiBufferToGMLoadPasses();
+
 } // namespace triton
 } // namespace mlir
 
