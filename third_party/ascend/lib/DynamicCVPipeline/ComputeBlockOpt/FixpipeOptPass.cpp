@@ -19,11 +19,13 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
-
+ 
+#include <optional>
 #include "ascend/include/DynamicCVPipeline/Common/Utils.h"
 #include "ascend/include/DynamicCVPipeline/ComputeBlockOpt/Passes.h"
 #include "ascend/include/DynamicCVPipeline/PlanComputeBlock/Common.h"
 #include "ascend/include/DynamicCVPipeline/PlanComputeBlock/ComputeBlockIdManager.h"
+#include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
@@ -41,7 +43,6 @@
 #include "mlir/Interfaces/ViewLikeInterface.h"
 #include "mlir/Support/LLVM.h"
 #include "triton/Analysis/Utility.h"
-#include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -282,10 +283,25 @@ void transSource(Value value, SetVector<Operation *> &matchedOps, Block *block)
     }
 }
 
+bool hasQuantScaleCompileHint(Operation *op, SetVector<Operation *> &matchedOps)
+{
+    return any_of(op->getUsers(), [&](Operation *userOp) {
+        auto markOp = dyn_cast<annotation::MarkOp>(userOp);
+        if (!markOp) {
+            return false;
+        }
+        matchedOps.insert(markOp);
+        return markOp->hasAttr(CVPipeline::kInlinableQuantScaleAttr);
+    });
+}
+
 bool FixpipeOptPass::isValidMul(Operation *op, Value matmulValue, SetVector<Operation *> &matchedOps)
 {
     // Just filter: arith.mulf/muli(scalar)
     if (!isa<arith::MulFOp>(op) && !isa<arith::MulIOp>(op)) {
+        return false;
+    }
+    if (!hasQuantScaleCompileHint(op, matchedOps)) {
         return false;
     }
     auto quantScalarValue = op->getOperand(0) == matmulValue ? op->getOperand(1) : op->getOperand(0);
@@ -425,6 +441,23 @@ bool FixpipeOptPass::isFixpipeCastPattern(Operation *truncOp, SetVector<Operatio
     return true;
 }
 
+std::optional<Operation *> getOneUserExceptMarkOp(Operation *op)
+{
+    int count = 0;
+    Operation *onlyUser = nullptr;
+    for (auto user : op->getUsers()) {
+        if (!isa<annotation::MarkOp>(user)) {
+            count += 1;
+            onlyUser = user;
+        }
+    }
+    if (count != 1) {
+        return std::nullopt;
+    } else {
+        return onlyUser;
+    }
+}
+
 /** Fixpipe supports scaling, the pattern should be like below:
     linalg.matmul
         ↓
@@ -438,26 +471,25 @@ bool FixpipeOptPass::isFixpipeCastPattern(Operation *truncOp, SetVector<Operatio
 bool FixpipeOptPass::isFixpipeMulPattern(Operation *mulOp, SetVector<Operation *> &matchedOps)
 {
     Value mulResult = mulOp->getResult(0);
-    if (!mulResult.hasOneUse()) {
+    auto maybeExtract = getOneUserExceptMarkOp(mulOp).value_or(nullptr);
+    if (!maybeExtract) {
         LOG_DEBUG("Mul not only one user, NOT match.");
         return false;
     }
-    auto maybeExtract = *mulResult.getUsers().begin();
     tensor::ExtractSliceOp extractSliceOp = nullptr;
-    Value extractResult = mulResult;
     if (auto extract = dyn_cast<tensor::ExtractSliceOp>(maybeExtract)) {
         extractSliceOp = extract;
-        extractResult = extractSliceOp.getResult();
         matchedOps.insert(extractSliceOp);
     }
 
-    if (!extractResult.hasOneUse()) {
+    if (extractSliceOp && !getOneUserExceptMarkOp(extractSliceOp).has_value()) {
         LOG_DEBUG("Extract Slice not only one user, NOT match.");
         return false;
     }
 
+    auto storeOp = extractSliceOp ? getOneUserExceptMarkOp(extractSliceOp).value() : maybeExtract;
     matchedOps.insert(mulOp);
-    if (!isStoreToGM(*extractResult.getUsers().begin(), matchedOps)) {
+    if (!isStoreToGM(storeOp, matchedOps)) {
         LOG_DEBUG("Not store to GM pattern, NOT match.");
         return false;
     }

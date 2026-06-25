@@ -35,6 +35,7 @@
 // all prior writers/readers and become the sole writer for every slot.
 
 #include "ascend/include/DynamicCVPipeline/Common/MemoryEffectsTracker.h"
+#include "ascend/include/DynamicCVPipeline/Common/Utils.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/IR/Block.h"
@@ -288,8 +289,12 @@ SmallVector<MemoryEffects::EffectInstance> MemoryDependenceGraph::collectOuterEf
     unknown = false;
 
     if (auto markOp = dyn_cast<annotation::MarkOp>(op)) {
-        MemoryEffects::EffectInstance scopedWrite(MemoryEffects::Write::get());
-        return {remapEffectValue(scopedWrite, markOp.getSrc())};
+        if (markOp->hasAttr(CVPipeline::kInlinableQuantScaleAttr)) {
+            return {};
+        } else {
+            MemoryEffects::EffectInstance scopedWrite(MemoryEffects::Write::get());
+            return {remapEffectValue(scopedWrite, markOp.getSrc())};
+        }
     }
 
     if (auto allocTensorOp = dyn_cast<bufferization::AllocTensorOp>(op)) {
