@@ -165,8 +165,10 @@ static scf::ForOp createForOpAndMigrateBody(
   Block *oldBlock = oldForOp.getBody();
   Block *newBlock = newForOp.getBody();
 
-  if (failed(replaceBlockArguments(oldBlock, newBlock)))
+  if (failed(replaceBlockArguments(oldBlock, newBlock))) {
+    newForOp.erase();
     return scf::ForOp();
+  }
 
   for (Operation &op : llvm::make_early_inc_range(oldBlock->without_terminator()))
     op.moveBefore(newBlock, newBlock->end());

@@ -29,6 +29,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Debug.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/IRMapping.h"
 
@@ -430,6 +431,9 @@ LogicalResult CloneOpsPass::validateClonedOpsInVector(ModuleOp module)
 
     for (Operation &bodyOp : forOp.getBody()->without_terminator()) {
       if (!bodyOp.hasAttr(CVPipeline::kClone)) {
+        continue;
+      }
+      if (isa<tensor::EmptyOp>(bodyOp)) {
         continue;
       }
       bool hasTensorDep = llvm::any_of(bodyOp.getResults(), [](Value result) {
