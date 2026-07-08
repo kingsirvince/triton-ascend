@@ -222,6 +222,9 @@ def ttir_to_linalg(mod, metadata, opt, *, named_ops=False):
             metadata["set_workspace_multibuffer"] = 0
             metadata["enable_mixed_cv"] = True
             metadata["disable_auto_inject_block_sync"] = True
+            ascend.passes.ttir.set_enable_dynamic_cv_flow_optimization(metadata["enable_dynamic_cv_flow_opt"])
+            ascend.passes.ttir.set_enable_cube_block_merge(metadata["enable_cube_block_merge"])
+
             ascend.passes.ttir.add_dynamic_cv_pipeline(pm, compile_on_910_95)
 
         _intra_val = metadata.get("intra_cache_num")
