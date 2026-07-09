@@ -454,6 +454,7 @@ int OpClassifierPass::patternMatchCUBE()
             for (Operation *user : result.getUsers()) {
                 // If user is scf.yield, follow the chain to find real users
                 Operation *curUser = user;
+                Value prevResult = result;
                 while (curUser) {
                     if (!allResultHasOneUser(curUser)) {
                         break;
@@ -462,7 +463,6 @@ int OpClassifierPass::patternMatchCUBE()
                         if (Operation *scfOp = yieldOp->getParentOp()) {
                             // Find which operand index the previous result corresponds to in the yield
                             unsigned yieldOperandIdx = 0;
-                            Value prevResult = result;
                             for (unsigned i = 0; i < yieldOp->getNumOperands(); ++i) {
                                 if (yieldOp->getOperand(i) == prevResult) {
                                     yieldOperandIdx = i;
