@@ -726,6 +726,14 @@ extern "C" {
     }
 """
 
+    # DEBUG: 预构建 signature 调试打印语句, 避免 f-string 表达式内出现反斜杠
+    _nl = chr(92) + "n"  # C 字符串中的 \n
+    debug_sig_fprintf = LINE_CHANGE_CHAR.join(
+        'fprintf(dbgFp, "  sig[' + str(i) + '] ty=' + ty + ' -> dataTypes[' + str(i) + ']=%d' + _nl + '", dataTypes[' + str(i) + ']);'
+        for i, ty in signature.items()
+        if ty.startswith("*") and i < 5
+    )
+
     cpp_msprof_call_after_launch = f"""
     if (__MsprofFlagL0 || __MsprofFlagL1)
     {{
@@ -796,6 +804,30 @@ extern "C" {
           if ty.startswith("*") and i < 5
         )}
       }}
+      // ===== DEBUG: 打印 dataType 调试信息到文件 + stderr =====
+      do {{
+        FILE* dbgFp = fopen("/tmp/triton_dataType_debug.log", "a");
+        if (dbgFp) {{
+          fprintf(dbgFp, "===== opName=%s hashID=%lu threadIdx=%u =====\\n", _kernelName, opNameHashID, threadId);
+          fprintf(dbgFp, "tensorShapes.size()=%zu  max_tensors_num=%d\\n", tensorShapes.size(), max_tensors_num);
+          {debug_sig_fprintf}
+          for (int i = 0; i < max_tensors_num; i++) {{
+            fprintf(dbgFp, "  tensor[%d]: kind=%d shape=[", i, (i < (int)tensorKinds.size() ? tensorKinds[i] : -1));
+            for (size_t j = 0; j < tensorShapes[i].size(); j++) {{
+              fprintf(dbgFp, "%zu%s", tensorShapes[i][j], (j + 1 < tensorShapes[i].size()) ? "," : "");
+            }}
+            fprintf(dbgFp, "] dataType=%d\\n", dataTypes[i]);
+          }}
+          fflush(dbgFp);
+          fclose(dbgFp);
+        }}
+        // stderr 无缓冲, 直接在控制台可见
+        fprintf(stderr, "[TRITON_DT_DBG] op=%s tensorShapes=%zu dataTypes[0..%d)=", _kernelName, tensorShapes.size(), max_tensors_num);
+        for (int i = 0; i < max_tensors_num; i++) {{ fprintf(stderr, "%d ", dataTypes[i]); }}
+        fprintf(stderr, "\\n");
+        fflush(stderr);
+      }} while(0);
+      // ===== DEBUG END =====
       for (int i = 0; i < tensorShapes.size() && tensorCount < MSPROF_GE_TENSOR_DATA_NUM; i++) {{
         auto fillTensorData = [&](int index, int tensorType) {{
           profTensorData->tensorData[index].tensorType = tensorType;
