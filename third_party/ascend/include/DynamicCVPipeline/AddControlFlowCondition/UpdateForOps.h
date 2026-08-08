@@ -20,8 +20,8 @@
  * THE SOFTWARE.
  */
 
-#ifndef TRITON_ASCEND_SSBUF_UPDATE_LOOP_OPS_FOR_CONTROL_FLOW_H
-#define TRITON_ASCEND_SSBUF_UPDATE_LOOP_OPS_FOR_CONTROL_FLOW_H
+#ifndef TRITON_ASCEND_SSBUF_UPDATE_FOR_OPS_FOR_CONTROL_FLOW_H
+#define TRITON_ASCEND_SSBUF_UPDATE_FOR_OPS_FOR_CONTROL_FLOW_H
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
 
@@ -30,16 +30,16 @@
 namespace mlir {
 namespace triton {
 
-class UpdateLoopOpsPass
-    : public PassWrapper<UpdateLoopOpsPass, OperationPass<ModuleOp>> {
+class UpdateForOpsPass
+    : public PassWrapper<UpdateForOpsPass, OperationPass<ModuleOp>> {
 public:
-  UpdateLoopOpsPass() = default;
+  UpdateForOpsPass() = default;
 
   void runOnOperation() override;
 
   void setConditionInfo(ControlFlowConditionInfo *info) { this->info = info; }
 
-  llvm::StringRef getArgument() const override { return "update-loop-ops"; }
+  llvm::StringRef getArgument() const override { return "update-for-ops"; }
 
 private:
   LogicalResult
@@ -51,8 +51,8 @@ private:
 
   LogicalResult insertInterCorePipeS(ModuleOp module);
 
-  // Analyze tensor type iter_args dependencies in main_loop with ssbuffer.if
-  // ops
+  // Analyze the dependencies of the tensor type iter_args in the main_loop with
+  // the ssbuffer.if ops
   LogicalResult
   analyzeTensorIterArgDependencies(ModuleOp module,
                                    ControlFlowConditionInfo *info);
@@ -60,8 +60,8 @@ private:
   ControlFlowConditionInfo *info = nullptr;
 };
 
-std::unique_ptr<OperationPass<ModuleOp>> createUpdateLoopOpsPass();
+std::unique_ptr<OperationPass<ModuleOp>> createUpdateForOpsPass();
 
 } // namespace triton
 } // namespace mlir
-#endif // TRITON_ASCEND_SSBUF_UPDATE_LOOP_OPS_FOR_CONTROL_FLOW_H
+#endif // TRITON_ASCEND_SSBUF_UPDATE_FOR_OPS_FOR_CONTROL_FLOW_H

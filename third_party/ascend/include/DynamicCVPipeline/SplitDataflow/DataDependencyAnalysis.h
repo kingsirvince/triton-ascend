@@ -164,17 +164,16 @@ private:
   collectDiffCoreTypeUsers(mlir::BlockArgument iterArg,
                            llvm::StringRef initCoreType);
   void
-  insertProducerAndRecordDeps(mlir::LoopLikeOpInterface loopOp,
-                              mlir::BlockArgument loopArg,
+  insertProducerAndRecordDeps(scf::ForOp forOp, mlir::BlockArgument iterArg,
                               llvm::StringRef initCoreType,
                               llvm::SmallVector<mlir::Operation *> &diffUsers,
                               DataDependencyInfo &info);
-  void insertConsumerAndRecordDeps(mlir::LoopLikeOpInterface loopOp,
-                                   mlir::Value yieldedValue, int iterArgIndex,
+  void insertConsumerAndRecordDeps(scf::ForOp forOp, mlir::Value yieldedValue,
+                                   int iterArgIndex,
                                    llvm::StringRef initCoreType,
                                    DataDependencyInfo &info);
-  void recordInitValueDeps(mlir::LoopLikeOpInterface loopOp,
-                           mlir::Value initValue, llvm::StringRef yieldCoreType,
+  void recordInitValueDeps(scf::ForOp forOp, mlir::Value initValue,
+                           llvm::StringRef yieldCoreType,
                            DataDependencyInfo &info);
   void updateCoreTypeAtIndex(Operation *op, int index,
                              llvm::StringRef newCoreType);

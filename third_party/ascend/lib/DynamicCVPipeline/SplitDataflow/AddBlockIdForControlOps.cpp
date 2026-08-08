@@ -55,29 +55,26 @@ void AddBlockIdForControlOpsPass::runOnOperation() {
       return;
     }
 
-    if (isa<scf::ForOp, scf::IfOp, scf::WhileOp>(op)) {
+    if (isa<scf::ForOp, scf::IfOp>(op)) {
       maxBlockId++;
       setOpBlockId(op, maxBlockId);
       LOG_DEBUG("Added block_id " << maxBlockId << " to " << *op << "\n");
     }
 
-    Operation *parentOp = op->getParentOp();
-    bool isControlTerminator =
-        (isa<scf::YieldOp>(op) && isa<scf::IfOp, scf::WhileOp>(parentOp)) ||
-        (isa<scf::ConditionOp>(op) && isa<scf::WhileOp>(parentOp));
-    if (isControlTerminator) {
-      auto parentBlockIdOpt = CVPipeline::getOpBlockId(parentOp);
+    // coretype of scf.yield may not be the same with defining op
+    if (isa<scf::YieldOp>(op) && isa<scf::IfOp>(op->getParentOp())) {
+      Operation *parentOp = op->getParentOp();
+      auto ifBlockIdOpt = CVPipeline::getOpBlockId(parentOp);
 
-      int terminatorBlockId;
-      if (parentBlockIdOpt) {
-        terminatorBlockId = *parentBlockIdOpt;
+      int yieldBlockId;
+      if (ifBlockIdOpt) {
+        yieldBlockId = *ifBlockIdOpt;
       } else {
         maxBlockId++;
-        terminatorBlockId = maxBlockId;
+        yieldBlockId = maxBlockId;
       }
-      setOpBlockId(op, terminatorBlockId);
-      LOG_DEBUG("Added block_id " << terminatorBlockId << " to " << *op
-                                  << "\n");
+      setOpBlockId(op, yieldBlockId);
+      LOG_DEBUG("Added block_id " << yieldBlockId << " to " << *op << "\n");
     }
   });
 

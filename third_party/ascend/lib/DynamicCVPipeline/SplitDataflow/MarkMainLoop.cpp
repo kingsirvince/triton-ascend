@@ -44,24 +44,21 @@ void MarkMainLoopPass::runOnOperation() {
   }
 
   int mainLoopIdCounter = 0;
-  SmallVector<Operation *> mainLoops;
+  SmallVector<scf::ForOp> mainLoops;
 
-  // Find all candidate main loops (ForOp + WhileOp)
+  // Find all candidate main loops
   module.walk([&](Operation *op) {
     if (isa<hivm::FixpipeOp, hivm::CopyOp>(op)) {
       if (auto forOp = op->getParentOfType<scf::ForOp>()) {
         mainLoops.push_back(forOp);
       }
-      if (auto whileOp = op->getParentOfType<scf::WhileOp>()) {
-        mainLoops.push_back(whileOp);
-      }
     }
   });
 
-  for (Operation *loopOp : mainLoops) {
-    if (!loopOp->hasAttr(CVPipeline::kMainLoop)) {
+  for (scf::ForOp forOp : mainLoops) {
+    if (!forOp->hasAttr(CVPipeline::kMainLoop)) {
       // Add attribute with integer value (current counter ID)
-      loopOp->setAttr(
+      forOp->setAttr(
           CVPipeline::kMainLoop,
           Builder(module.getContext()).getI32IntegerAttr(mainLoopIdCounter));
       mainLoopIdCounter++;
@@ -70,24 +67,24 @@ void MarkMainLoopPass::runOnOperation() {
 
   // Remove main_loop attribute from outer loops if nested loops both have it
   // Keep only the innermost main_loop
-  SmallVector<Operation *> allMainLoops;
-  module.walk([&](Operation *loopOp) {
-    if (CVPipeline::isMainLoopOp(loopOp)) {
-      allMainLoops.push_back(loopOp);
+  SmallVector<scf::ForOp> allMainLoops;
+  module.walk([&](scf::ForOp forOp) {
+    if (forOp->hasAttr(CVPipeline::kMainLoop)) {
+      allMainLoops.push_back(forOp);
     }
   });
 
-  for (Operation *loopOp : allMainLoops) {
-    // Check if there's any nested loop with main_loop attribute
+  for (scf::ForOp forOp : allMainLoops) {
+    // Check if there's any nested for loop with main_loop attribute
     bool hasNestedMainLoop = false;
-    loopOp->walk([&](Operation *nestedLoopOp) {
-      if (nestedLoopOp != loopOp && CVPipeline::isMainLoopOp(nestedLoopOp)) {
+    forOp.walk([&](scf::ForOp nestedForOp) {
+      if (nestedForOp != forOp && nestedForOp->hasAttr(CVPipeline::kMainLoop)) {
         hasNestedMainLoop = true;
       }
     });
     // Remove attribute from outer loop if inner loop also has it
     if (hasNestedMainLoop) {
-      loopOp->removeAttr(CVPipeline::kMainLoop);
+      forOp->removeAttr(CVPipeline::kMainLoop);
     }
   }
 

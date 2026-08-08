@@ -22,6 +22,11 @@
 
 #include "llvm/Support/Debug.h"
 
+#include "ascend/include/DynamicCVPipeline/AddControlFlowCondition/CreateIfOps.h"
+#include "ascend/include/DynamicCVPipeline/AddControlFlowCondition/Utils.h"
+#include "ascend/include/DynamicCVPipeline/Common/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -40,13 +45,12 @@ static constexpr const char *DEBUG_TYPE = "CreateIfOps";
 #define LDBG(...)                                                              \
   LLVM_DEBUG({                                                                 \
     DBGS();                                                                    \
-    llvm::dbgs() << __VA_ARGS__;                                               \
-    llvm::dbgs() << "\n";                                                      \
+    llvm::outs() << __VA_ARGS__;                                               \
+    llvm::outs() << "\n";                                                      \
   })
 
 using namespace mlir;
 using namespace triton;
-using namespace CVPipeline;
 
 // Check if a value is used outside the given region ops
 static bool isUsedOutsideRegion(Value v,
@@ -60,7 +64,7 @@ static bool isUsedOutsideRegion(Value v,
   return false;
 }
 
-// Find iter_arg in main loop for `v` (yield operand idx = body arg position).
+// Find the iteration argument in main loop that corresponds to the given value
 static Value findIterArgInMainLoop(Value v, mlir::Type t) {
   for (Operation *user : v.getUsers()) {
     auto yieldOp = dyn_cast<scf::YieldOp>(user);
@@ -68,21 +72,14 @@ static Value findIterArgInMainLoop(Value v, mlir::Type t) {
       continue;
     }
 
-    SmallVector<Value> iterArgs =
-        MainLoop(yieldOp->getParentOp()).getIterArgs();
-    if (iterArgs.empty()) {
+    auto forOp = dyn_cast<scf::ForOp>(yieldOp->getParentOp());
+    if (!forOp) {
       continue;
     }
 
     for (auto [idx, operand] : llvm::enumerate(yieldOp.getOperands())) {
       if (operand.getAsOpaquePointer() == v.getAsOpaquePointer()) {
-        if (idx >= iterArgs.size()) {
-          LDBG("[Error]: yield operand index "
-               << idx << " out of range for iter_args size "
-               << iterArgs.size());
-          continue;
-        }
-        Value iterArg = iterArgs[idx];
+        Value iterArg = forOp.getRegionIterArgs()[idx];
         if (iterArg.getType() == t) {
           return iterArg;
         }
@@ -90,7 +87,7 @@ static Value findIterArgInMainLoop(Value v, mlir::Type t) {
     }
   }
 
-  LDBG("[Error]: else yield value not found in forOp/whileOp iter_args: " << v);
+  LDBG("[Error]: else yield value not found in forOp iter_args: " << v << "\n");
   return nullptr;
 }
 
@@ -102,20 +99,21 @@ static LogicalResult replaceExternalIfOpUses(scf::IfOp ifOp,
     Value oldVal = oldYieldValues[i];
 
     if (!oldVal) {
-      LDBG("[Error]: oldVal is null at index " << i);
+      LDBG("[Error]: oldVal is null at index " << i << "\n");
       return failure();
     }
 
     if (i >= ifOp.getNumResults()) {
       LDBG("[Error]: index " << i << " exceeds ifOp results count "
-                             << ifOp.getNumResults());
+                             << ifOp.getNumResults() << "\n");
       return failure();
     }
 
     Value newVal = ifOp.getResult(i);
     if (oldVal.getType() != newVal.getType()) {
       LDBG("[Error]: type mismatch at index " << i << ": " << oldVal.getType()
-                                              << " vs " << newVal.getType());
+                                              << " vs " << newVal.getType()
+                                              << "\n");
       return failure();
     }
 
@@ -146,14 +144,13 @@ static LogicalResult replaceExternalIfOpUses(scf::IfOp ifOp,
   return success();
 }
 
-// Computes yield values per block (values yielded from the if); op-agnostic as
-// findIterArgInMainLoop dispatches on the yield's parent op (forOp/whileOp).
+// Compute yield values for each block: values that need to be yielded from the
+// if
 LogicalResult CreateIfOpsPass::computeYieldValues(
-    Operation *loopOp,
+    scf::ForOp forOp,
     const llvm::DenseMap<int, SmallVector<Operation *>> &blockOps,
     llvm::DenseMap<int, SmallVector<Value>> &thenYieldValues,
     llvm::DenseMap<int, SmallVector<Value>> &elseYieldValues) {
-  (void)loopOp; // unused; findIterArgInMainLoop walks the yield's parent.
   for (auto &p : blockOps) {
     int id = p.first;
     const SmallVector<Operation *> &ops = p.second;
@@ -215,7 +212,7 @@ static scf::IfOp createIfOpForBlock(OpBuilder &builder, Location loc,
   // Check size consistency
   if (needsYield && thenValues.size() != elseValues.size()) {
     LDBG("[Error]: then/else yield count mismatch: "
-         << thenValues.size() << " vs " << elseValues.size());
+         << thenValues.size() << " vs " << elseValues.size() << "\n");
     return scf::IfOp();
   }
 
@@ -225,7 +222,7 @@ static scf::IfOp createIfOpForBlock(OpBuilder &builder, Location loc,
       if (thenValues[i].getType() != elseValues[i].getType()) {
         LDBG("[Error]: then/else yield type mismatch at index "
              << i << ": " << thenValues[i].getType() << " vs "
-             << elseValues[i].getType());
+             << elseValues[i].getType() << "\n");
         return scf::IfOp();
       }
     }
@@ -243,7 +240,7 @@ static scf::IfOp createIfOpForBlock(OpBuilder &builder, Location loc,
     ifOp = builder.create<scf::IfOp>(loc, TypeRange{}, trueVal, false);
   }
 
-  ifOp->setAttr(CVPipeline::kIf, builder.getI32IntegerAttr(blockId));
+  ifOp->setAttr(kSSBufferIfAttr, builder.getI32IntegerAttr(blockId));
 
   // notify npuir that of the scenario
   ifOp->setAttr(CVPipeline::kHIVMMatmulLimitedInCubeAttr,
@@ -259,7 +256,7 @@ static LogicalResult moveOpsToThenBranch(scf::IfOp ifOp,
                                          const SmallVector<Value> &elseValues,
                                          Location loc) {
   if (ops.empty() && !thenValues.empty()) {
-    LDBG("[Error]: moving empty ops but thenValues not empty");
+    LDBG("[Error]: moving empty ops but thenValues not empty\n");
     return failure();
   }
 
@@ -281,19 +278,13 @@ static LogicalResult moveOpsToThenBranch(scf::IfOp ifOp,
   return success();
 }
 
-// Create if ops (scf.if %true) for each block_id in the main loop.
-// `op` is the main-loop op (scf.for or scf.while).
+// Create if ops (scf.if %true) for each block_id in the main loop
 LogicalResult CreateIfOpsPass::createIfInMainLoop(
-    Operation *op,
+    scf::ForOp forOp,
     const llvm::DenseMap<int, SmallVector<Operation *>> &blockOps,
     const llvm::DenseMap<int, SmallVector<Value>> &thenYieldValues,
     const llvm::DenseMap<int, SmallVector<Value>> &elseYieldValues) {
-  SmallVector<int> ids = getBlockIdsInOrder(op);
-  if (ids.empty() && !MainLoop(op).getBody()) {
-    LDBG("[Error]: op with ssbuffer.main_loop is neither scf::ForOp nor "
-         "scf::WhileOp");
-    return failure();
-  }
+  SmallVector<int> ids = getBlockIdsInOrder(forOp);
 
   for (int id : ids) {
     const SmallVector<Operation *> &ops = blockOps.lookup(id);
@@ -333,35 +324,37 @@ void CreateIfOpsPass::runOnOperation() {
     return;
   }
 
-  LDBG("before createIfOps:\n" << module);
+  LDBG("before createIfOps:\n" << module << "\n");
 
   auto walkResult = module.walk([&](Operation *op) -> WalkResult {
-    if (!isMainLoopOp(op)) {
+    if (!op->hasAttr("ssbuffer.main_loop")) {
       return WalkResult::advance();
     }
-
-    llvm::DenseMap<int, SmallVector<Operation *>> blockOps;
-    if (failed(collectOpsByBlockId(op, blockOps))) {
-      LDBG("[Error]: op with ssbuffer.main_loop is neither scf::ForOp nor "
-           "scf::WhileOp, or a body op is missing ssbuffer.block_id\n");
+    auto forOp = dyn_cast<scf::ForOp>(op);
+    if (!forOp) {
+      LDBG("[Error]: op with ssbuffer.main_loop is not a scf::ForOp\n");
       return WalkResult::interrupt();
     }
 
-    // blockCounterNums is keyed on the main-loop op (scf.for or scf.while).
-    // Record it for both forOp and whileOp.
+    // Create if ops (scf.if %true) by block_id
+    llvm::DenseMap<int, SmallVector<Operation *>> blockOps;
+    if (failed(collectOpsByBlockId(forOp, blockOps))) {
+      return WalkResult::interrupt();
+    }
+
     if (info) {
-      info->blockCounterNums[op] = blockOps.size();
+      info->blockCounterNums[forOp] = blockOps.size();
     }
 
     llvm::DenseMap<int, SmallVector<Value>> thenYieldValues;
     llvm::DenseMap<int, SmallVector<Value>> elseYieldValues;
 
-    if (failed(computeYieldValues(op, blockOps, thenYieldValues,
+    if (failed(computeYieldValues(forOp, blockOps, thenYieldValues,
                                   elseYieldValues))) {
       return WalkResult::interrupt();
     }
 
-    if (failed(createIfInMainLoop(op, blockOps, thenYieldValues,
+    if (failed(createIfInMainLoop(forOp, blockOps, thenYieldValues,
                                   elseYieldValues))) {
       return WalkResult::interrupt();
     }
@@ -372,7 +365,7 @@ void CreateIfOpsPass::runOnOperation() {
     return;
   }
 
-  LDBG("after createIfOps:\n" << module);
+  LDBG("after createIfOps:\n" << module << "\n");
 }
 
 namespace mlir {

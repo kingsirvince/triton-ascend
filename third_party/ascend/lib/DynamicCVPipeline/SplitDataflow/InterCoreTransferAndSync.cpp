@@ -438,7 +438,7 @@ InterCoreTransferAndSyncPass::findMainLoopforTransfer(Operation *endOp,
   }
   Operation *current = lca;
   while (current) {
-    if (isa<scf::ForOp, scf::WhileOp>(current)) {
+    if (isa<scf::ForOp>(current)) {
       return current;
     }
     current = current->getParentOp();

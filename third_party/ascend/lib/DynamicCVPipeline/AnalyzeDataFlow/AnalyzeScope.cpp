@@ -82,31 +82,31 @@ static bool checkTransferInteraction(mlir::Operation *op) {
 }
 
 static bool checkVecScopeMainLoop(ModuleOp module) {
-  bool hasMainLoop = false;
-  bool allMainLoopsSatisfy = true;
+  bool hasMainLoopFor = false;
+  bool allForSatisfy = true;
 
   module.walk([&](scope::ScopeOp scopeOp) -> WalkResult {
     if (!isVectorScope(scopeOp)) {
       return WalkResult::advance();
     }
 
-    scopeOp.walk([&](Operation *op) -> WalkResult {
-      if (!isMainLoopOp(op)) {
+    scopeOp.walk([&](scf::ForOp forOp) -> WalkResult {
+      if (!forOp->hasAttr(CVPipeline::kMainLoop)) {
         return WalkResult::advance();
       }
 
-      hasMainLoop = true;
+      hasMainLoopFor = true;
       bool hasCVInteraction = false;
 
-      op->walk([&](mlir::Operation *innerOp) -> WalkResult {
-        if (innerOp == op) {
+      forOp.walk([&](mlir::Operation *op) -> WalkResult {
+        if (op == forOp) {
           return WalkResult::advance();
         }
 
         // ops with "ssbuffer.transfer_id" are injected in SplitDataflowPass for
         // data transfer
-        if (innerOp->hasAttr(CVPipeline::kTransferId)) {
-          hasCVInteraction = checkTransferInteraction(innerOp);
+        if (op->hasAttr(CVPipeline::kTransferId)) {
+          hasCVInteraction = checkTransferInteraction(op);
           if (hasCVInteraction) {
             return WalkResult::interrupt();
           }
@@ -115,44 +115,42 @@ static bool checkVecScopeMainLoop(ModuleOp module) {
         return WalkResult::advance();
       });
 
-      // As long as there is a for/while with "ssbuffer.main_loop" that is not a
-      // real mainloop, the processing conditions are not met, need to skip.
+      // As long as there is a forOp with "ssbuffer.main_loop" not a real
+      // mainloop, the processing conditions are not met, need to skip.
       if (!hasCVInteraction) {
-        allMainLoopsSatisfy = false;
+        allForSatisfy = false;
         return WalkResult::interrupt();
       }
 
       return WalkResult::advance();
     });
 
-    if (!allMainLoopsSatisfy) {
+    if (!allForSatisfy) {
       return WalkResult::interrupt();
     }
 
     return WalkResult::advance();
   });
 
-  return hasMainLoop && allMainLoopsSatisfy;
+  return hasMainLoopFor && allForSatisfy;
 }
 
-// For every main_loop id, gather all for/while ops sharing that id and count
-// the hivm.hir.copy and hivm.hir.fixpipe ops within them. Only when ALL
-// main_loop ids have either count equal to zero (every id has only copy or
-// only fixpipe, none has both), the dynamic CV pipeline cannot be applied and
-// we fall back to the original workflow.
+// For every main_loop id, gather all forOps sharing that id and count the
+// hivm.hir.copy and hivm.hir.fixpipe ops within them. Only when ALL main_loop
+// ids have either count equal to zero (every id has only copy or only
+// fixpipe, none has both), the dynamic CV pipeline cannot be applied and we
+// fall back to the original workflow.
 //   - hivm::CopyOp    typically appears in VECTOR scope main_loops
 //   - hivm::FixpipeOp typically appears in CUBE scope main_loops
-// Nested regions inside the main_loop op are also walked, and scf.yield
+// Nested regions inside the main_loop forOp are also walked, and scf.yield
 // terminators are skipped.
 static bool isMainLoopOnlyCopyOrFixpipe(ModuleOp module) {
   // main_loop id -> (countCopy, countFixpipe)
   llvm::DenseMap<int, std::pair<int, int>> idToCounts;
 
-  module.walk([&](Operation *op) -> WalkResult {
-    if (!isa<scf::ForOp, scf::WhileOp>(op)) {
-      return WalkResult::advance();
-    }
-    auto mainLoopAttr = op->getAttrOfType<IntegerAttr>(CVPipeline::kMainLoop);
+  module.walk([&](scf::ForOp forOp) -> WalkResult {
+    auto mainLoopAttr =
+        forOp->getAttrOfType<IntegerAttr>(CVPipeline::kMainLoop);
     if (!mainLoopAttr) {
       return WalkResult::advance();
     }
@@ -160,18 +158,18 @@ static bool isMainLoopOnlyCopyOrFixpipe(ModuleOp module) {
     int id = mainLoopAttr.getInt();
     auto &counts = idToCounts[id];
 
-    op->walk([&](mlir::Operation *innerOp) -> WalkResult {
-      // Skip the loop op itself (the walk visits it first)
-      if (innerOp == op) {
+    forOp.walk([&](mlir::Operation *op) -> WalkResult {
+      // Skip the forOp itself (the walk visits it first)
+      if (op == forOp) {
         return WalkResult::advance();
       }
       // Skip yield terminators (they are not real ops)
-      if (isa<scf::YieldOp>(innerOp)) {
+      if (isa<scf::YieldOp>(op)) {
         return WalkResult::advance();
       }
-      if (isa<hivm::CopyOp>(innerOp)) {
+      if (isa<hivm::CopyOp>(op)) {
         ++counts.first;
-      } else if (isa<hivm::FixpipeOp>(innerOp)) {
+      } else if (isa<hivm::FixpipeOp>(op)) {
         ++counts.second;
       }
       return WalkResult::advance();
@@ -197,14 +195,15 @@ static bool isMainLoopOnlyCopyOrFixpipe(ModuleOp module) {
 }
 
 static LogicalResult verifyMainLoop(ModuleOp module) {
-  bool hasMainLoopOp = false;
-  module.walk([&](Operation *op) {
-    if (isMainLoopOp(op)) {
-      hasMainLoopOp = true;
+  // Only skip if ALL forOps lack main_loop attr
+  bool hasMainLoopForOp = false;
+  module.walk([&](scf::ForOp forOp) {
+    if (forOp->hasAttr("ssbuffer.main_loop")) {
+      hasMainLoopForOp = true;
     }
   });
 
-  if (!hasMainLoopOp) {
+  if (!hasMainLoopForOp) {
     LDBG("[INFO]: No cycle of multiple iterations, the DynamicCVPipeline pass "
          "will be interrupted, and resumed to the original workflow.");
     CVPipeline::setFallbackAttr(module, CVPipeline::ERRCODE_IGNORED);
