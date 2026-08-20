@@ -1,0 +1,39 @@
+third_party/ascend/lib/TritonToLinalg/TritonToLinalgPass.cpp
+  h_53d46860714c38 60,519-520
+  s_5fa370205edd74::t_c2e4e47d4a079e 760-761
+  s_5fa370205edd74::t_cb2caa62c724a4 757-759
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.2",
+  "base_commit_sha": "777ac4078cf6d5db0b8748264a6a5437eb8130b1",
+  "prompts": {},
+  "humans": {
+    "h_53d46860714c38": {
+      "author": "kingsirvince <wzpwzp9002@163.com>"
+    }
+  },
+  "sessions": {
+    "s_5fa370205edd74": {
+      "agent_id": {
+        "tool": "trae",
+        "id": "6a865d5fd6360d3a53caaced",
+        "model": "glm-5.2"
+      },
+      "human_author": "kingsirvince <wzpwzp9002@163.com>",
+      "custom_attributes": {
+        "runtime_client": "trae-tob-git-ai",
+        "source_scene": "agent",
+        "dedupe_key": "6a865d5fd6360d3a53caaced:6a86668ed6360d3a53caad4c:afterEdit:00dcfb0e",
+        "client_type": "ide",
+        "external_session_id": "6a865d5fd6360d3a53caaced",
+        "operation_id": "6a86668ed6360d3a53caad4c",
+        "tool_type": "builtin",
+        "edit_kind": "file_edit",
+        "tool_id": "icube:applyChatSnapshotPatch",
+        "tool_use_id": "6a86668ed6360d3a53caad4c",
+        "session_id": "6a865d5fd6360d3a53caaced"
+      }
+    }
+  }
+}
