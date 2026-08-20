@@ -1,0 +1,32 @@
+third_party/ascend/unittest/pytest_ut/test_import_time.py
+  s_5fa370205edd74::t_49e62c7b98b682 1-59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.2",
+  "base_commit_sha": "094c62d994d9252e45522ea6d0ef7f23e9203333",
+  "prompts": {},
+  "sessions": {
+    "s_5fa370205edd74": {
+      "agent_id": {
+        "tool": "trae",
+        "id": "6a865d5fd6360d3a53caaced",
+        "model": "glm-5.2"
+      },
+      "human_author": "kingsirvince <wzpwzp9002@163.com>",
+      "custom_attributes": {
+        "operation_id": "6a86b8d2d6360d3a53caaded",
+        "runtime_client": "trae-tob-git-ai",
+        "tool_type": "builtin",
+        "edit_kind": "file_edit",
+        "dedupe_key": "6a865d5fd6360d3a53caaced:6a86b8d2d6360d3a53caaded:afterEdit:cd6ebadd",
+        "source_scene": "agent",
+        "external_session_id": "6a865d5fd6360d3a53caaced",
+        "client_type": "ide",
+        "session_id": "6a865d5fd6360d3a53caaced",
+        "tool_use_id": "6a86b8d2d6360d3a53caaded",
+        "tool_id": "icube:applyChatSnapshotPatch"
+      }
+    }
+  }
+}
