@@ -1,0 +1,42 @@
+third_party/ascend/backend/utils.py
+  s_fee7124603a087::t_76f59cb0c1926e 36-40,55,64-65,70,73-74,76,89-109,140-153,161-162,164,167-173,196-210
+third_party/ascend/unittest/pytest_ut/test_compiler_layout_memory_contract.py
+  s_fee7124603a087::t_76f59cb0c1926e 100,102,377,548,676-677,684
+third_party/ascend/backend/runtime/autotuner.py
+  s_fee7124603a087::t_76f59cb0c1926e 76-80,133,138,148-154
+third_party/ascend/unittest/pytest_ut/test_runtime_utils.py
+  s_fee7124603a087::t_76f59cb0c1926e 30-34,64,66-67,70-71,73,76-77,80,83,86-87,90
+third_party/ascend/backend/runtime/ubtuner.py
+  s_fee7124603a087::t_76f59cb0c1926e 568-572,574-575
+third_party/ascend/backend/compiler.py
+  s_fee7124603a087::t_76f59cb0c1926e 182,216,261,266,712-714,902-905,968-974,1038,1063,1082,1119,1150-1162,1221-1224,1282-1285,1301,1303-1306,1317-1318
+third_party/ascend/unittest/costmodel_ut/test_compiler_costmodel_contract.py
+  s_fee7124603a087::t_76f59cb0c1926e 32-33,36,116,135,139-141
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.2",
+  "base_commit_sha": "95521432ad71167114760ed2a0abf9afc16d3f92",
+  "prompts": {},
+  "sessions": {
+    "s_fee7124603a087": {
+      "agent_id": {
+        "tool": "trae",
+        "id": "6a115a7863673e855430aa83",
+        "model": "glm-5.3__dev"
+      },
+      "human_author": "wangzhanpeng5 <wangzhanpeng5@huawei.com>",
+      "custom_attributes": {
+        "source_scene": "agent",
+        "edit_kind": "bash",
+        "tool_use_id": "6a8d5e5506693e89e8eaf6d0",
+        "session_id": "6a115a7863673e855430aa83",
+        "tool_name": "RunCommand",
+        "operation_id": "6a8d5e5506693e89e8eaf6d0",
+        "runtime_client": "trae-tob-git-ai",
+        "external_session_id": "6a115a7863673e855430aa83",
+        "client_type": "ide"
+      }
+    }
+  }
+}
