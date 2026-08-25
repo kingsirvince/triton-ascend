@@ -1,0 +1,30 @@
+third_party/ascend/unittest/pytest_ut/test_runtime_utils.py
+  s_fee7124603a087::t_76f59cb0c1926e 82-84
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.2",
+  "base_commit_sha": "11f52b8ddce7d3ff150c2203b2576f10c1783faa",
+  "prompts": {},
+  "sessions": {
+    "s_fee7124603a087": {
+      "agent_id": {
+        "tool": "trae",
+        "id": "6a115a7863673e855430aa83",
+        "model": "glm-5.3__dev"
+      },
+      "human_author": "wangzhanpeng5 <wangzhanpeng5@huawei.com>",
+      "custom_attributes": {
+        "edit_kind": "bash",
+        "client_type": "ide",
+        "runtime_client": "trae-tob-git-ai",
+        "operation_id": "6a8d5e5506693e89e8eaf6d0",
+        "session_id": "6a115a7863673e855430aa83",
+        "tool_name": "RunCommand",
+        "source_scene": "agent",
+        "external_session_id": "6a115a7863673e855430aa83",
+        "tool_use_id": "6a8d5e5506693e89e8eaf6d0"
+      }
+    }
+  }
+}
