@@ -1,0 +1,30 @@
+third_party/ascend/backend/utils.py
+  s_fee7124603a087::t_76f59cb0c1926e 116-119,139
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.2",
+  "base_commit_sha": "3684f94d96ec4198eff909384366f4d095bad58e",
+  "prompts": {},
+  "sessions": {
+    "s_fee7124603a087": {
+      "agent_id": {
+        "tool": "trae",
+        "id": "6a115a7863673e855430aa83",
+        "model": "glm-5.3__dev"
+      },
+      "human_author": "wangzhanpeng5 <wangzhanpeng5@huawei.com>",
+      "custom_attributes": {
+        "tool_use_id": "6a8d5e5506693e89e8eaf6d0",
+        "session_id": "6a115a7863673e855430aa83",
+        "client_type": "ide",
+        "source_scene": "agent",
+        "tool_name": "RunCommand",
+        "external_session_id": "6a115a7863673e855430aa83",
+        "operation_id": "6a8d5e5506693e89e8eaf6d0",
+        "edit_kind": "bash",
+        "runtime_client": "trae-tob-git-ai"
+      }
+    }
+  }
+}
