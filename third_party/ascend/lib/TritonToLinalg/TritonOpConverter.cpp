@@ -1706,7 +1706,7 @@ LogicalResult
 ScanConverter::convertToTargetOp(triton::ScanOp op,
                                  typename triton::ScanOp::Adaptor adaptor,
                                  ConversionPatternRewriter &rewriter) const {
-  auto reductionOps = this->getReductionOps(op);
+  auto reductionOps = this->getRealReductionOps(op);
   if (reductionOps.empty()) {
     return rewriter.notifyMatchFailure(op,
                                        "No reduction op found in scan body");
