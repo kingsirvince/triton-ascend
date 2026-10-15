@@ -795,6 +795,11 @@ bool OpClassifierPass::shouldSkipCubeUpstream(Operation *op) {
     LOG_DEBUG("skip " << *op << ": Extracted Load/Store Related");
     return true;
   }
+  if (isa<scf::ForOp, scf::WhileOp, scf::IfOp>(op)) {
+    LLVM_DEBUG(DBGS() << "skip " << op->getName().getStringRef()
+                      << ": scf dialect op\n");
+    return true;
+  }
   return false;
 }
 
