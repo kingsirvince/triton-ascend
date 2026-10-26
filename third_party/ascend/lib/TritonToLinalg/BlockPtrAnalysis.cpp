@@ -518,6 +518,28 @@ BlockDataParser::getScalarMemRef(Value ptr, Value memref, const Location &loc,
     return (*castOp).getResult();
   }
 
+  // A scalar pointer produced directly by a distributed custom op (e.g.
+  // distributed.consume_token) is lowered to a memref carrier in the
+  // custom-op conversion. Consume that carrier directly so a following
+  // tt.load/tt.store does not force a live memref-to-pointer cast.
+  if (auto definingOp = ptr.getDefiningOp();
+      definingOp && isDistributedTypeCustomOp(definingOp)) {
+    if (!isa<BaseMemRefType>(memref.getType()))
+      return failure();
+    if (auto memrefType = dyn_cast<MemRefType>(memref.getType());
+        memrefType && memrefType.getRank() == 1)
+      return memref;
+    BlockData data;
+    data.setSource(memref);
+    data.getOffsetsRef().push_back(rewriter.getIndexAttr(0));
+    data.getSizesRef().push_back(rewriter.getIndexAttr(1));
+    data.getStridesRef().push_back(rewriter.getIndexAttr(1));
+    auto castOp = data.createCastOp(SmallVector<int64_t>(1, 1), loc, rewriter);
+    if (failed(castOp))
+      return failure();
+    return (*castOp).getResult();
+  }
+
   if (!isa<BlockArgument>(ptr) || !isa<BaseMemRefType>(memref.getType()))
     return failure();
 
