@@ -35,6 +35,39 @@ def _is_a5_target(_semantic) -> bool:
     return is_compile_on_910_95(_semantic.builder.options.arch)
 
 
+def _is_a3_target(_semantic) -> bool:
+    # A2 and A3 share the memory-vector libdevice ABI.
+    arch = _semantic.builder.options.arch
+    return isinstance(arch, str) and arch.startswith(("Ascend910B", "Ascend910_93"))
+
+
+# A2/A3 CCE workspace ABI tuples contain:
+# (row count, storage dtype, operation-sized rows).
+# Sizes are element counts. Fixed rows contain 64 lanes; operation-sized
+# rows are rounded to 8 elements to keep 32-bit row starts 32-byte aligned.
+def _libdevice_elementwise(lib_name, lib_path, args, arg_type_symbol_dict, is_pure, workspace, _semantic=None):
+    if _is_a3_target(_semantic):
+        return _extern_elementwise(lib_name, lib_path, args, arg_type_symbol_dict, is_pure, workspace, _semantic)
+    return core.extern_elementwise(lib_name, lib_path, args, arg_type_symbol_dict, is_pure=is_pure, _semantic=_semantic)
+
+
+def _extern_elementwise(lib_name, lib_path, args, arg_type_symbol_dict, is_pure, workspace, _semantic=None):
+    args = [_semantic.to_tensor(arg) for arg in args]
+    result = core.extern_elementwise(lib_name, lib_path, args, arg_type_symbol_dict, is_pure=is_pure,
+                                     _semantic=_semantic)
+
+    rows, dtype, operation_sized = workspace
+    extent = 64
+    if operation_sized:
+        # Frontend block shapes are static, and include the broadcasted result.
+        elements = result.type.numel if result.type.is_block() else 1
+        extent = ((elements + 7) // 8) * 8
+    builder = _semantic.builder
+    result.handle.set_attr("extra_buffers_types", builder.get_type_array_attr([dtype.to_ir(builder)]))
+    result.handle.set_attr("extra_buffers_sizes", builder.get_i64_array_attr([rows * extent]))
+    return result
+
+
 class _FlipStaticRange:
 
     def __init__(self, arg1, arg2=None, step=None):
@@ -348,12 +381,12 @@ def logb(arg0, _semantic=None):
     :return: The exponent value of the input parameter.
     :rtype: ``float32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.logb for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0], {
+    return _libdevice_elementwise("", "", [arg0], {
         (core.dtype("fp32"), ): ("__hmf_logb_fp32", core.dtype("fp32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(3, core.float32, True), _semantic=_semantic)
 
 
 @core.extern
@@ -508,12 +541,12 @@ def clz(arg0, _semantic=None):
     :return: The number of leading zeros in the input parameter. Range: [0, 32].
     :rtype: ``int32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.clz for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0], {
+    return _libdevice_elementwise("", "", [arg0], {
         (core.dtype("int32"), ): ("__hmf_clz_i32", core.dtype("int32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(9, core.int32, True), _semantic=_semantic)
 
 
 @core.extern
@@ -526,12 +559,12 @@ def popc(arg0, _semantic=None):
     :return: The number of bits set to 1 in x. Range: [0, 32].
     :rtype: ``int32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.popc for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0], {
+    return _libdevice_elementwise("", "", [arg0], {
         (core.dtype("int32"), ): ("__hmf_popc_i32", core.dtype("int32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(2, core.int32, True), _semantic=_semantic)
 
 
 @core.extern
@@ -548,12 +581,12 @@ def byte_perm(arg0, arg1, arg2, _semantic=None):
     :return: The integer whose n-th byte is selected from x and y by selector s.
     :rtype: ``int32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.byte_perm for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0, arg1, arg2], {
+    return _libdevice_elementwise("", "", [arg0, arg1, arg2], {
         (core.dtype("int32"), core.dtype("int32"), core.dtype("int32")): ("__hmf_byte_perm_i32", core.dtype("int32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(5, core.int32, True), _semantic=_semantic)
 
 
 @core.extern
@@ -614,12 +647,12 @@ def brev(arg0, _semantic=None):
     :return: The 32-bit integer with reversed bit order.
     :rtype: ``int32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.brev for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0], {
+    return _libdevice_elementwise("", "", [arg0], {
         (core.dtype("int32"), ): ("__hmf_brev_i32", core.dtype("int32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(4, core.int32, True), _semantic=_semantic)
 
 
 @core.extern
@@ -749,12 +782,12 @@ def fdim(arg0, arg1, _semantic=None):
     :return: The positive difference between x and y.
     :rtype: ``float32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.fdim for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0, arg1], {
+    return _libdevice_elementwise("", "", [arg0, arg1], {
         (core.dtype("fp32"), core.dtype("fp32")): ("__hmf_fdim_fp32", core.dtype("fp32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(1, core.float32, True), _semantic=_semantic)
 
 
 @core.extern
@@ -1233,12 +1266,12 @@ def rsqrt_rn(arg0, _semantic=None):
     :return: The reciprocal square root of x.
     :rtype: ``float32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.rsqrt_rn for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0], {
+    return _libdevice_elementwise("", "", [arg0], {
         (core.dtype("fp32"), ): ("__hmf_rsqrt_rn_fp32", core.dtype("fp32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(1, core.float32, True), _semantic=_semantic)
 
 
 @core.extern
@@ -1401,12 +1434,12 @@ def fast_sinf(arg0, _semantic=None):
     :return: The result of the fast approximate sine function.
     :rtype: ``float32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.fast_sinf for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0], {
+    return _libdevice_elementwise("", "", [arg0], {
         (core.dtype("fp32"), ): ("__hmf_fast_sin_fp32", core.dtype("fp32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(4, core.float32, True), _semantic=_semantic)
 
 
 @core.builtin
@@ -1419,12 +1452,12 @@ def fast_cosf(arg0, _semantic=None):
     :return: The result of the fast approximate cosine function.
     :rtype: ``float32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.fast_cosf for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0], {
+    return _libdevice_elementwise("", "", [arg0], {
         (core.dtype("fp32"), ): ("__hmf_fast_cos_fp32", core.dtype("fp32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(4, core.float32, True), _semantic=_semantic)
 
 
 @core.builtin
@@ -1437,12 +1470,12 @@ def fast_tanf(arg0, _semantic=None):
     :return: The result of the fast approximate tangent function.
     :rtype: ``float32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.fast_tanf for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0], {
+    return _libdevice_elementwise("", "", [arg0], {
         (core.dtype("fp32"), ): ("__hmf_fast_tan_fp32", core.dtype("fp32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(8, core.float32, True), _semantic=_semantic)
 
 
 @core.builtin
@@ -1455,12 +1488,12 @@ def fast_tanhf(arg0, _semantic=None):
     :return: The fast approximate hyperbolic tangent of x.
     :rtype: ``float32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.fast_tanhf for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0], {
+    return _libdevice_elementwise("", "", [arg0], {
         (core.dtype("fp32"), ): ("__hmf_fast_tanh_fp32", core.dtype("fp32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(3, core.float32, True), _semantic=_semantic)
 
 
 @core.builtin
@@ -1529,12 +1562,12 @@ def fast_powf(arg0, arg1, _semantic=None):
     :return: The result of fast approximate power function.
     :rtype: ``float32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.fast_powf for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0, arg1], {
+    return _libdevice_elementwise("", "", [arg0, arg1], {
         (core.dtype("fp32"), core.dtype("fp32")): ("__hmf_fast_pow_fp32", core.dtype("fp32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(8, core.float32, False), _semantic=_semantic)
 
 
 @core.extern
@@ -1571,12 +1604,12 @@ def remainder(arg0, arg1, _semantic=None):
     :return: The remainder of x divided by y.
     :rtype: ``float32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.remainder for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0, arg1], {
+    return _libdevice_elementwise("", "", [arg0, arg1], {
         (core.dtype("fp32"), core.dtype("fp32")): ("__hmf_remainder_fp32", core.dtype("fp32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(8, core.float32, True), _semantic=_semantic)
 
 
 @core.extern
@@ -1807,12 +1840,12 @@ def float2uint_rn(arg0, _semantic=None):
     :return: The converted 32-bit unsigned integer.
     :rtype: ``uint32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.float2uint_rn for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0], {
+    return _libdevice_elementwise("", "", [arg0], {
         (core.dtype("fp32"), ): ("__hmf_float2uint_rn_fp32", core.dtype("uint32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(2, core.int32, True), _semantic=_semantic)
 
 
 @core.extern
@@ -1825,12 +1858,12 @@ def float2uint_rz(arg0, _semantic=None):
     :return: The converted 32-bit unsigned integer.
     :rtype: ``uint32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.float2uint_rz for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0], {
+    return _libdevice_elementwise("", "", [arg0], {
         (core.dtype("fp32"), ): ("__hmf_float2uint_rz_fp32", core.dtype("uint32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(2, core.int32, True), _semantic=_semantic)
 
 
 @core.extern
@@ -1843,12 +1876,12 @@ def float2uint_rd(arg0, _semantic=None):
     :return: The converted 32-bit unsigned integer.
     :rtype: ``uint32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.float2uint_rd for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0], {
+    return _libdevice_elementwise("", "", [arg0], {
         (core.dtype("fp32"), ): ("__hmf_float2uint_rd_fp32", core.dtype("uint32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(2, core.int32, True), _semantic=_semantic)
 
 
 @core.extern
@@ -1861,12 +1894,12 @@ def float2uint_ru(arg0, _semantic=None):
     :return: The converted 32-bit unsigned integer.
     :rtype: ``uint32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.float2uint_ru for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0], {
+    return _libdevice_elementwise("", "", [arg0], {
         (core.dtype("fp32"), ): ("__hmf_float2uint_ru_fp32", core.dtype("uint32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(2, core.int32, True), _semantic=_semantic)
 
 
 @core.extern
@@ -1879,12 +1912,12 @@ def uint2float_rn(arg0, _semantic=None):
     :return: The converted floating-point number.
     :rtype: ``float32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.uint2float_rn for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0], {
+    return _libdevice_elementwise("", "", [arg0], {
         (core.dtype("uint32"), ): ("__hmf_uint2float_rn_fp32", core.dtype("fp32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(1, core.int32, True), _semantic=_semantic)
 
 
 @core.extern
@@ -1897,12 +1930,12 @@ def uint2float_rz(arg0, _semantic=None):
     :return: The converted floating-point number.
     :rtype: ``float32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.uint2float_rz for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0], {
+    return _libdevice_elementwise("", "", [arg0], {
         (core.dtype("uint32"), ): ("__hmf_uint2float_rz_fp32", core.dtype("fp32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(1, core.int32, True), _semantic=_semantic)
 
 
 @core.extern
@@ -1915,12 +1948,12 @@ def uint2float_rd(arg0, _semantic=None):
     :return: The converted floating-point number.
     :rtype: ``float32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.uint2float_rd for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0], {
+    return _libdevice_elementwise("", "", [arg0], {
         (core.dtype("uint32"), ): ("__hmf_uint2float_rd_fp32", core.dtype("fp32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(1, core.int32, True), _semantic=_semantic)
 
 
 @core.extern
@@ -1933,12 +1966,12 @@ def uint2float_ru(arg0, _semantic=None):
     :return: The converted floating-point number.
     :rtype: ``float32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.uint2float_ru for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0], {
+    return _libdevice_elementwise("", "", [arg0], {
         (core.dtype("uint32"), ): ("__hmf_uint2float_ru_fp32", core.dtype("fp32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(1, core.int32, True), _semantic=_semantic)
 
 
 @core.extern
@@ -2095,12 +2128,12 @@ def float2ull_rn(arg0, _semantic=None):
     :return: The converted 64-bit unsigned integer.
     :rtype: ``uint64``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.float2ull_rn for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0], {
+    return _libdevice_elementwise("", "", [arg0], {
         (core.dtype("fp32"), ): ("__hmf_float2ull_rn_fp32", core.dtype("uint64")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(5, core.int32, False), _semantic=_semantic)
 
 
 @core.extern
@@ -2113,12 +2146,12 @@ def float2ull_rz(arg0, _semantic=None):
     :return: The converted 64-bit unsigned integer.
     :rtype: ``uint64``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.float2ull_rz for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0], {
+    return _libdevice_elementwise("", "", [arg0], {
         (core.dtype("fp32"), ): ("__hmf_float2ull_rz_fp32", core.dtype("uint64")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(5, core.int32, False), _semantic=_semantic)
 
 
 @core.extern
@@ -2131,12 +2164,12 @@ def float2ull_rd(arg0, _semantic=None):
     :return: The converted 64-bit unsigned integer.
     :rtype: ``uint64``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.float2ull_rd for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0], {
+    return _libdevice_elementwise("", "", [arg0], {
         (core.dtype("fp32"), ): ("__hmf_float2ull_rd_fp32", core.dtype("uint64")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(5, core.int32, False), _semantic=_semantic)
 
 
 @core.extern
@@ -2149,12 +2182,12 @@ def float2ull_ru(arg0, _semantic=None):
     :return: The converted 64-bit unsigned integer.
     :rtype: ``uint64``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.float2ull_ru for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0], {
+    return _libdevice_elementwise("", "", [arg0], {
         (core.dtype("fp32"), ): ("__hmf_float2ull_ru_fp32", core.dtype("uint64")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(5, core.int32, False), _semantic=_semantic)
 
 
 @core.extern
@@ -2167,12 +2200,12 @@ def ull2float_rn(arg0, _semantic=None):
     :return: The converted floating-point number.
     :rtype: ``float32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.ull2float_rn for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0], {
+    return _libdevice_elementwise("", "", [arg0], {
         (core.dtype("uint64"), ): ("__hmf_ull2float_rn_fp32", core.dtype("fp32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(1, core.int32, True), _semantic=_semantic)
 
 
 @core.extern
@@ -2185,12 +2218,12 @@ def ull2float_rz(arg0, _semantic=None):
     :return: The converted floating-point number.
     :rtype: ``float32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.ull2float_rz for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0], {
+    return _libdevice_elementwise("", "", [arg0], {
         (core.dtype("uint64"), ): ("__hmf_ull2float_rz_fp32", core.dtype("fp32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(1, core.int32, True), _semantic=_semantic)
 
 
 @core.extern
@@ -2203,12 +2236,12 @@ def ull2float_rd(arg0, _semantic=None):
     :return: The converted floating-point number.
     :rtype: ``float32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.ull2float_rd for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0], {
+    return _libdevice_elementwise("", "", [arg0], {
         (core.dtype("uint64"), ): ("__hmf_ull2float_rd_fp32", core.dtype("fp32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(1, core.int32, True), _semantic=_semantic)
 
 
 @core.extern
@@ -2221,12 +2254,12 @@ def ull2float_ru(arg0, _semantic=None):
     :return: The converted floating-point number.
     :rtype: ``float32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.ull2float_ru for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0], {
+    return _libdevice_elementwise("", "", [arg0], {
         (core.dtype("uint64"), ): ("__hmf_ull2float_ru_fp32", core.dtype("fp32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(1, core.int32, True), _semantic=_semantic)
 
 
 @core.extern
@@ -2654,12 +2687,12 @@ def rcbrt(arg0, _semantic=None):
     :return: The reciprocal cube root of x.
     :rtype: ``float32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.rcbrt for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0], {
+    return _libdevice_elementwise("", "", [arg0], {
         (core.dtype("fp32"), ): ("__hmf_rcbrt_fp32", core.dtype("fp32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(1, core.float32, True), _semantic=_semantic)
 
 
 @core.extern
@@ -2674,12 +2707,12 @@ def rhypot(arg0, arg1, _semantic=None):
     :return: The reciprocal of the Euclidean distance between x and y.
     :rtype: ``float32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.rhypot for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0, arg1], {
+    return _libdevice_elementwise("", "", [arg0, arg1], {
         (core.dtype("fp32"), core.dtype("fp32")): ("__hmf_rhypot_fp32", core.dtype("fp32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(2, core.float32, True), _semantic=_semantic)
 
 
 @core.extern
@@ -2696,12 +2729,12 @@ def norm3d(arg0, arg1, arg2, _semantic=None):
     :return: The Euclidean norm of the 3D vector.
     :rtype: ``float32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.norm3d for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0, arg1, arg2], {
+    return _libdevice_elementwise("", "", [arg0, arg1, arg2], {
         (core.dtype("fp32"), core.dtype("fp32"), core.dtype("fp32")): ("__hmf_norm3d_fp32", core.dtype("fp32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(1, core.float32, True), _semantic=_semantic)
 
 
 @core.extern
@@ -2718,12 +2751,12 @@ def rnorm3d(arg0, arg1, arg2, _semantic=None):
     :return: The reciprocal of the Euclidean norm of the 3D vector.
     :rtype: ``float32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.rnorm3d for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0, arg1, arg2], {
+    return _libdevice_elementwise("", "", [arg0, arg1, arg2], {
         (core.dtype("fp32"), core.dtype("fp32"), core.dtype("fp32")): ("__hmf_rnorm3d_fp32", core.dtype("fp32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(1, core.float32, True), _semantic=_semantic)
 
 
 @core.extern
@@ -2742,14 +2775,14 @@ def norm4d(arg0, arg1, arg2, arg3, _semantic=None):
     :return: The Euclidean norm of the 4D vector.
     :rtype: ``float32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.norm4d for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise(
+    return _libdevice_elementwise(
         "", "", [arg0, arg1, arg2, arg3], {
             (core.dtype("fp32"), core.dtype("fp32"), core.dtype("fp32"), core.dtype("fp32")):
             ("__hmf_norm4d_fp32", core.dtype("fp32")),
-        }, is_pure=True, _semantic=_semantic)
+        }, is_pure=True, workspace=(1, core.float32, True), _semantic=_semantic)
 
 
 @core.extern
@@ -2768,14 +2801,14 @@ def rnorm4d(arg0, arg1, arg2, arg3, _semantic=None):
     :return: The reciprocal of the Euclidean norm of the 4D vector.
     :rtype: ``float32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.rnorm4d for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise(
+    return _libdevice_elementwise(
         "", "", [arg0, arg1, arg2, arg3], {
             (core.dtype("fp32"), core.dtype("fp32"), core.dtype("fp32"), core.dtype("fp32")):
             ("__hmf_rnorm4d_fp32", core.dtype("fp32")),
-        }, is_pure=True, _semantic=_semantic)
+        }, is_pure=True, workspace=(1, core.float32, True), _semantic=_semantic)
 
 
 @core.extern
@@ -2788,12 +2821,12 @@ def j0(arg0, _semantic=None):
     :return: The Bessel function of the first kind of order 0 of the input parameter.
     :rtype: ``float32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.j0 for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0], {
+    return _libdevice_elementwise("", "", [arg0], {
         (core.dtype("fp32"), ): ("__hmf_j0_fp32", core.dtype("fp32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(4, core.float32, True), _semantic=_semantic)
 
 
 @core.extern
@@ -2806,12 +2839,12 @@ def j1(arg0, _semantic=None):
     :return: The Bessel function of the first kind of order 1 of the input parameter.
     :rtype: ``float32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.j1 for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0], {
+    return _libdevice_elementwise("", "", [arg0], {
         (core.dtype("fp32"), ): ("__hmf_j1_fp32", core.dtype("fp32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(4, core.float32, True), _semantic=_semantic)
 
 
 @core.extern
@@ -2826,12 +2859,12 @@ def jn(arg0, arg1, _semantic=None):
     :return: The Bessel function of the first kind of order n of the input parameter.
     :rtype: ``float32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.jn for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0, arg1], {
+    return _libdevice_elementwise("", "", [arg0, arg1], {
         (core.dtype("int32"), core.dtype("fp32")): ("__hmf_jn_fp32", core.dtype("fp32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(7, core.float32, True), _semantic=_semantic)
 
 
 @core.extern
@@ -2844,12 +2877,12 @@ def y0(arg0, _semantic=None):
     :return: The Bessel function of the second kind of order 0 of the input parameter.
     :rtype: ``float32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.y0 for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0], {
+    return _libdevice_elementwise("", "", [arg0], {
         (core.dtype("fp32"), ): ("__hmf_y0_fp32", core.dtype("fp32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(12, core.float32, True), _semantic=_semantic)
 
 
 @core.extern
@@ -2862,12 +2895,12 @@ def y1(arg0, _semantic=None):
     :return: The Bessel function of the second kind of order 1 of the input parameter.
     :rtype: ``float32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.y1 for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0], {
+    return _libdevice_elementwise("", "", [arg0], {
         (core.dtype("fp32"), ): ("__hmf_y1_fp32", core.dtype("fp32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(12, core.float32, True), _semantic=_semantic)
 
 
 @core.extern
@@ -2882,12 +2915,12 @@ def yn(arg0, arg1, _semantic=None):
     :return: The Bessel function of the second kind of order n of the input parameter.
     :rtype: ``float32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.yn for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0, arg1], {
+    return _libdevice_elementwise("", "", [arg0, arg1], {
         (core.dtype("int32"), core.dtype("fp32")): ("__hmf_yn_fp32", core.dtype("fp32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(14, core.float32, True), _semantic=_semantic)
 
 
 # This function is derived from the Cephes Math Library release 2.8: June, 2000
@@ -3012,12 +3045,12 @@ def cyl_bessel_i1(arg0, _semantic=None):
     :return: The modified Bessel function of the first kind, order 1, of the input parameter.
     :rtype: ``float32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.cyl_bessel_i1 for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0], {
+    return _libdevice_elementwise("", "", [arg0], {
         (core.dtype("fp32"), ): ("__hmf_cyl_bessel_i1_fp32", core.dtype("fp32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(8, core.float32, True), _semantic=_semantic)
 
 
 @core.extern
@@ -3086,12 +3119,12 @@ def erfc(arg0, _semantic=None):
     :return: The complementary error function of the input parameter.
     :rtype: ``float32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.erfc for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0], {
+    return _libdevice_elementwise("", "", [arg0], {
         (core.dtype("fp32"), ): ("__hmf_erfc_fp32", core.dtype("fp32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(4, core.float32, True), _semantic=_semantic)
 
 
 @core.extern
@@ -3104,12 +3137,12 @@ def erfcx(arg0, _semantic=None):
     :return: The scaled complementary error function of the input parameter.
     :rtype: ``float32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.erfcx for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0], {
+    return _libdevice_elementwise("", "", [arg0], {
         (core.dtype("fp32"), ): ("__hmf_erfcx_fp32", core.dtype("fp32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(5, core.float32, True), _semantic=_semantic)
 
 
 @core.extern
@@ -3122,12 +3155,12 @@ def erfcinv(arg0, _semantic=None):
     :return: The inverse complementary error function of the input parameter.
     :rtype: ``float32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.erfcxinv for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0], {
+    return _libdevice_elementwise("", "", [arg0], {
         (core.dtype("fp32"), ): ("__hmf_erfcinv_fp32", core.dtype("fp32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(5, core.float32, True), _semantic=_semantic)
 
 
 # Note:
@@ -3261,12 +3294,12 @@ def normcdf(arg0, _semantic=None):
     :return: The cumulative distribution function of the standard normal distribution.
     :rtype: ``float32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.normcdf for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0], {
+    return _libdevice_elementwise("", "", [arg0], {
         (core.dtype("fp32"), ): ("__hmf_normcdf_fp32", core.dtype("fp32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(3, core.float32, True), _semantic=_semantic)
 
 
 @core.extern
@@ -3279,12 +3312,12 @@ def normcdfinv(arg0, _semantic=None):
     :return: The inverse of the cumulative distribution function of the standard normal distribution.
     :rtype: ``float32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.normcdfinv for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0], {
+    return _libdevice_elementwise("", "", [arg0], {
         (core.dtype("fp32"), ): ("__hmf_normcdfinv_fp32", core.dtype("fp32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(10, core.float32, True), _semantic=_semantic)
 
 
 # Note:
@@ -3366,12 +3399,12 @@ def tgamma(arg0, _semantic=None):
     :return: The gamma function of the input parameter.
     :rtype: ``float32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.tgamma for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0], {
+    return _libdevice_elementwise("", "", [arg0], {
         (core.dtype("fp32"), ): ("__hmf_tgamma_fp32", core.dtype("fp32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(9, core.float32, False), _semantic=_semantic)
 
 
 # Note:
@@ -3485,12 +3518,12 @@ def sinpi(arg0, _semantic=None):
     :return: The value of sin(π × x).
     :rtype: ``float32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.sinpi for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0], {
+    return _libdevice_elementwise("", "", [arg0], {
         (core.dtype("fp32"), ): ("__hmf_sinpi_fp32", core.dtype("fp32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(1, core.float32, True), _semantic=_semantic)
 
 
 @core.extern
@@ -3503,12 +3536,12 @@ def cospi(arg0, _semantic=None):
     :return: The value of cos(π × x).
     :rtype: ``float32``
     """
-    if not _is_a5_target(_semantic):
+    if not (_is_a5_target(_semantic) or _is_a3_target(_semantic)):
         core.static_print("libdevice.cospi for simd is unsupported for now.")
         core.static_assert(False)
-    return core.extern_elementwise("", "", [arg0], {
+    return _libdevice_elementwise("", "", [arg0], {
         (core.dtype("fp32"), ): ("__hmf_cospi_fp32", core.dtype("fp32")),
-    }, is_pure=True, _semantic=_semantic)
+    }, is_pure=True, workspace=(1, core.float32, True), _semantic=_semantic)
 
 
 @core.builtin

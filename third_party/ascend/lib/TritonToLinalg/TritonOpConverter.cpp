@@ -2281,6 +2281,12 @@ LogicalResult ExternElementwiseClOpConverter::matchAndRewrite(
       customOp->setAttr("arg_attrs", argAttrsArray);
       customOp.setInlineMode(hivm::InlineMode::AlwaysInline);
 
+      // The frontend owns the libdevice workspace ABI and size calculation.
+      for (StringRef name : {"extra_buffers_types", "extra_buffers_sizes"}) {
+        if (Attribute attr = op->getAttr(name))
+          customOp->setAttr(name, attr);
+      }
+
       // Restore the result's shape and element type
       Value finalResult = customOp.getResults().front();
       if (needsExpand) {
