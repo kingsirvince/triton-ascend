@@ -1318,50 +1318,58 @@ public:
 /// Inline private callees into their callers so the downstream ttadapter sees a
 /// single kernel function.
 static void inlinePrivateCallees(ModuleOp moduleOp) {
-  SmallVector<func::CallOp> callOps;
-  moduleOp.walk([&](func::CallOp call) { callOps.push_back(call); });
+  // Inlining a callee clones its body into the caller, which can bring in
+  // further calls (nested noinline helpers). Iterate to a fixed point so no
+  // func.call to a tt.func callee survives.
+  DenseSet<triton::FuncOp> inlinedCallees;
+  bool changed = true;
+  while (changed) {
+    changed = false;
+    SmallVector<func::CallOp> callOps;
+    moduleOp.walk([&](func::CallOp call) { callOps.push_back(call); });
 
-  SmallVector<triton::FuncOp> inlinedCallees;
-  for (func::CallOp call : callOps) {
-    triton::FuncOp callee = nullptr;
-    for (auto func : moduleOp.getOps<triton::FuncOp>()) {
-      if (func.getName() == call.getCallee()) {
-        callee = func;
-        break;
+    for (func::CallOp call : callOps) {
+      triton::FuncOp callee = nullptr;
+      for (auto func : moduleOp.getOps<triton::FuncOp>()) {
+        if (func.getName() == call.getCallee()) {
+          callee = func;
+          break;
+        }
       }
+      if (!callee)
+        continue;
+      if (!callee.getBody().hasOneBlock() ||
+          !isa<triton::ReturnOp>(callee.getBody().front().getTerminator()))
+        continue;
+
+      if (auto noinlineAttr = callee->getAttrOfType<BoolAttr>("noinline");
+          noinlineAttr && noinlineAttr.getValue())
+        call.emitWarning(
+            "Ascend has no device-side calling convention, so the "
+            "noinline attribute is not honored; inlining the callee");
+
+      Block &entry = callee.getBody().front();
+      auto retOp = cast<triton::ReturnOp>(entry.getTerminator());
+      if (retOp.getNumOperands() != call.getNumResults())
+        continue;
+
+      inlinedCallees.insert(callee);
+      OpBuilder builder(call);
+      IRMapping map;
+      for (auto [arg, operand] :
+           llvm::zip(entry.getArguments(), call.getOperands()))
+        map.map(arg, operand);
+      // Deep-clone the callee body (regions included), except the terminator.
+      for (Operation &op : entry.without_terminator())
+        builder.clone(op, map);
+
+      SmallVector<Value> results;
+      for (Value operand : retOp.getOperands())
+        results.push_back(map.lookupOrDefault(operand));
+      call.replaceAllUsesWith(results);
+      call.erase();
+      changed = true;
     }
-    if (!callee)
-      continue;
-    if (!callee.getBody().hasOneBlock() ||
-        !isa<triton::ReturnOp>(callee.getBody().front().getTerminator()))
-      continue;
-
-    if (auto noinlineAttr = callee->getAttrOfType<BoolAttr>("noinline");
-        noinlineAttr && noinlineAttr.getValue())
-      call.emitWarning(
-          "Ascend has no device-side calling convention, so the "
-          "noinline attribute is not honored; inlining the callee");
-
-    Block &entry = callee.getBody().front();
-    auto retOp = cast<triton::ReturnOp>(entry.getTerminator());
-    if (retOp.getNumOperands() != call.getNumResults())
-      continue;
-
-    inlinedCallees.push_back(callee);
-    OpBuilder builder(call);
-    IRMapping map;
-    for (auto [arg, operand] :
-         llvm::zip(entry.getArguments(), call.getOperands()))
-      map.map(arg, operand);
-    // Deep-clone the callee body (regions included), except the terminator.
-    for (Operation &op : entry.without_terminator())
-      builder.clone(op, map);
-
-    SmallVector<Value> results;
-    for (Value operand : retOp.getOperands())
-      results.push_back(map.lookupOrDefault(operand));
-    call.replaceAllUsesWith(results);
-    call.erase();
   }
 
   // Erase only the callees that were actually inlined above (and are no
@@ -1888,6 +1896,13 @@ void TritonToLinalgPass::runOnOperation() {
     return;
   }
 
+  // Inline private callees right after the memory stage. tt.call has already
+  // been lowered to func.call, and a func.call may only reference a
+  // func.func: tt.func callees stay tt.func until convertTTFunc runs in the
+  // finalize stage, and finishMemoryConversion below runs a verified pass
+  // pipeline that would reject the transient func.call -> tt.func pair.
+  inlinePrivateCallees(moduleOp);
+
   // Retire the consumed handoff, remove dead address chains, and verify the
   // pointer-free boundary before converting the remaining computations.
   if (failed(finishMemoryConversion(moduleOp))) {
@@ -2110,9 +2125,8 @@ LogicalResult TritonToLinalgPass::finalizeLoweredModule(ModuleOp moduleOp,
     signalPassFailure();
   }
 
-  // 8. Inline private callees so the downstream ttadapter sees a single kernel
-  // function, then convert function prologue/epilogue.
-  inlinePrivateCallees(moduleOp);
+  // 8. Private callees were already inlined at the memory-conversion
+  // boundary, so only the function prologue/epilogue is left to convert here.
   moduleOp.walk([&](triton::FuncOp func) {
     this->convertTTFunc(func, hasCubeOps, hasSimtOps);
   });
