@@ -1111,7 +1111,9 @@ def get_libdevice(arch: str):
     if not isinstance(arch, str):
         raise ValueError(f"unsupported Ascend architecture for libdevice: {arch!r}")
 
-    if arch.startswith(("Ascend910_95", "Ascend950")):
+    if arch.startswith(("Ascend910_96", "Ascend960")):
+        filename = "libdevice.9201.bc"
+    elif arch.startswith(("Ascend910_95", "Ascend950")):
         filename = "libdevice.10.bc"
     elif arch.startswith(("Ascend910B", "Ascend910_93")):
         filename = "libdevice.220.bc"

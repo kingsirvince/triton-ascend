@@ -48,16 +48,17 @@ def _write_acl_config(cfg_dir, config):
         ("Ascend910_9391", "libdevice.220.bc"),
         ("Ascend910_9581", "libdevice.10.bc"),
         ("Ascend950PR_9579", "libdevice.10.bc"),
+        ("Ascend910_9691", "libdevice.9201.bc"),
+        ("Ascend960", "libdevice.9201.bc"),
     ],
 )
 def test_get_libdevice_selects_architecture_specific_bitcode(arch, filename):
     assert Path(compiler.get_libdevice(arch)).name == filename
 
 
-@pytest.mark.parametrize("arch", ["Ascend910_9691", "Ascend960", "unknown"])
-def test_get_libdevice_rejects_unsupported_architecture(arch):
+def test_get_libdevice_rejects_unsupported_architecture():
     with pytest.raises(ValueError, match="unsupported Ascend architecture"):
-        compiler.get_libdevice(arch)
+        compiler.get_libdevice("unknown")
 
 
 def test_get_simt_stack_limit_default(monkeypatch):
