@@ -38,7 +38,7 @@ from .view import view, reshape
 from .aux_ops import annotate_buffer_versions
 from . import math
 from .math import compensated_rstd
-from .device_assert import device_assert
+from .debug import device_assert, device_print
 
 # SIMD vector-register ops.  ``simd`` is exported as a module so its ``cast``
 # (ave.hir.vextf) does not shadow unrelated top-level names.
@@ -46,6 +46,9 @@ from . import simd
 
 # Cube-core ops (``mmad``/``tla.copy`` L1/L0C routes).
 from . import cube
+
+# Explicit pipeline / global synchronization.
+from . import sync
 
 __all__ = [
     "buffer",
@@ -67,6 +70,7 @@ __all__ = [
     "math",
     "compensated_rstd",
     "device_assert",
+    "device_print",
 
     # aux ops
     "annotate_buffer_versions",
@@ -76,4 +80,7 @@ __all__ = [
 
     # cube ops
     "cube",
+
+    # explicit synchronization
+    "sync",
 ]

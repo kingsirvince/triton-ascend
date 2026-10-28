@@ -41,7 +41,8 @@ def handle_scope_with(generator, node):
     withitem_class = generator.visit(context_expr.func)
 
     with enter_sub_region(generator):
-        scope_op = generator.builder.create_scope_op(withitem_class.mlir_attrs(generator.builder), [])
+        attrs = withitem_class.mlir_attrs(generator.builder)
+        scope_op = generator.builder.create_scope_op(attrs, [])
         body = generator.builder.get_scope_entry_block(scope_op)
         generator.builder.set_insertion_point_to_start(body)
         generator.visit_compound_statement(node.body)

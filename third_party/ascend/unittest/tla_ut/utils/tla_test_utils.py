@@ -12,11 +12,15 @@ Stages are driven by env ``TLA_TEST_STAGE`` (default ``all``):
 otherwise ir only.
 """
 import os
+import re
 from pathlib import Path
 
 from triton.language.extra.tla.compiler import ast_to_ttir, lower_ttir
 from triton._C.libtriton import ir, buffer_ir, passes
 from triton._C.libtriton.ascend import ir as ascend_ir
+
+# Set TLA_IR_DUMP_DIR=<dir> to also dump the final IR under <dir>/<kernel>/.
+_DUMP_DIR = os.environ.get("TLA_IR_DUMP_DIR")
 
 
 class Options:
@@ -63,6 +67,19 @@ def make_context():
     return ctx
 
 
+def _dump_dir(name, output_dir):
+    """Dump dir: explicit output_dir wins, else $TLA_IR_DUMP_DIR/<kernel>/."""
+    if output_dir:
+        return output_dir
+    return Path(_DUMP_DIR) / name if _DUMP_DIR else None
+
+
+def _entry_func_name(module):
+    """TLA frontend entry func name (per-case subdir for the final dump)."""
+    m = re.search(r"tt\.func\s+(?:public\s+)?@(\w+)", str(module))
+    return m.group(1) if m else "lower"
+
+
 def compile_offline(fn, signature, constexprs, output_dir=None):
     """AST -> TTIR -> symbol_dce: front-end IR handed to npuir."""
     ctx = make_context()
@@ -80,8 +97,20 @@ def compile_offline(fn, signature, constexprs, output_dir=None):
 
 
 def lower_offline(module, ctx, output_dir=None):
-    """Run full triton-ascend chain to ttadapter boundary: no TTIR leaks to npuir."""
-    return lower_ttir(module, ctx, output_dir=output_dir)
+    """Run full triton-ascend chain to ttadapter boundary: no TTIR leaks to npuir.
+
+    output_dir defaults to $TLA_IR_DUMP_DIR/<kernel>/; None = no dump.  Only the
+    final ttadapter-boundary IR (01_linalg.mlir) is dumped.
+    """
+    # Entry name must be read before lowering: the pass manager rewrites the
+    # module in place (tt.func -> func.func at the ttadapter boundary).
+    name = _entry_func_name(module)
+    lowered = lower_ttir(module, ctx)
+    dump = _dump_dir(name, output_dir)
+    if dump:
+        dump.mkdir(parents=True, exist_ok=True)
+        (dump / "01_linalg.mlir").write_text(str(lowered))
+    return lowered
 
 
 def check_lowered_ir(text, loads, stores, buffers, extra=()):

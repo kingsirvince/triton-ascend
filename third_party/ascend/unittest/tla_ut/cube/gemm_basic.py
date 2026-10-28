@@ -33,17 +33,17 @@ SIGNATURE = {"A_ptr": "*fp16", "B_ptr": "*fp16", "C_ptr": "*fp32"}
 @triton.jit
 def gemm_basic(A_ptr, B_ptr, C_ptr, M: tl.constexpr, N: tl.constexpr, K: tl.constexpr):
     tl.static_assert(K % 16 == 0 and M % 16 == 0 and N % 16 == 0, "M/N/K must be multiples of 16 (cube tile)")
-    a_l1 = tla.alloc_buffer((M, K), tl.float16, space="l1")
-    b_l1 = tla.alloc_buffer((K, N), tl.float16, space="l1")
-    c_l0c = tla.alloc_buffer((M, N), tl.float32, space="l0c")
+    a_l1 = tla.alloc_buffer((K // 16, M // 16, 16, 16), tl.float16, space="l1")
+    b_l1 = tla.alloc_buffer((N // 16, K // 16, 16, 16), tl.float16, space="l1")
+    c_l0c = tla.alloc_buffer((N // 16, M // 16, 16, 16), tl.float32, space="l0c")
     a_blk = tla.view(A_ptr, (M, K), strides=(K, 1))
     b_blk = tla.view(B_ptr, (K, N), strides=(N, 1))
     c_blk = tla.view(C_ptr, (M, N), strides=(N, 1))
     with tla.scope.cube():
-        tla.copy(a_blk, a_l1)  # hivm.hir.nd2nz
+        tla.copy(a_blk, a_l1)  # hivm.hir.nd2nz (ND -> NZ)
         tla.copy(b_blk, b_l1)  # hivm.hir.nd2nz
         tla.cube.mmad(a_l1, b_l1, c_l0c, clear_accum=True)  # hivm.hir.mmadL1
-        tla.copy(c_l0c, c_blk)  # hivm.hir.fixpipe (2D dst -> nz2nd)
+        tla.copy(c_l0c, c_blk)  # hivm.hir.fixpipe (NZ -> ND)
 
 
 def constexprs():

@@ -19,18 +19,19 @@
 # SOFTWARE.
 """Core-mode scopes for TLA (``with tla.scope.simd():``).
 
-A scope marks a block of register ops (``simd.*`` on the vector core) that the
-compiler emits as an inline ``scope.scope`` carrying the core-mode markers; the
-bishengir ``outline-scope`` pass extracts the marked SIMD scope into the
+A scope marks a block of ops (``simd.*`` on the vector core) that the compiler
+emits as an inline ``scope.scope`` carrying the core-mode markers; the
+bishengir ``outline-scope`` pass extracts marked SIMD scopes into the
 ``func.func`` + ``func.call`` that the HIVM stage consumes.
 
-``tla.scope.simd()`` and ``tla.scope.cube()`` are the entry points; each is a
-context-manager class (the core mode is fixed on the class), so the compiler
-dispatch table keys off the class object itself. Each class defines
-``mlir_attrs``, the attribute set stamped on the emitted ``scope.scope``.
+``tla.scope.vector()``, ``tla.scope.simd()`` and ``tla.scope.cube()`` are the
+entry points; each is a context-manager class (the core mode is fixed on the
+class), so the compiler dispatch table keys off the class object itself. Each
+class defines ``mlir_attrs``, the attribute set stamped on the emitted
+``scope.scope``.
 """
 
-__all__ = ["scope", "simd", "cube"]
+__all__ = ["scope", "vector", "simd", "cube"]
 
 
 class scope:
@@ -52,16 +53,26 @@ class scope:
         return {"hivm.tcore_type": builder.parse_attr("#hivm.tcore_type<VECTOR>")}
 
 
+class vector(scope):
+    """``with tla.scope.vector():`` -- vector-core region for non-SIMD ops.
+
+    A vector scope is the vector core's inline region: it hosts non-SIMD
+    vector-core ops (``tla.copy`` GM<->UB, control flow) and can nest
+    :class:`simd` scopes for the register work. Only ``hivm.tcore_type<VECTOR>``
+    is stamped (no VF markers), so ``outline-scope`` never extracts it;
+    ``InlineScope(forceInline=true)`` folds it back at the end of the HIVM
+    pipeline.
+    """
+
+    core_mode = "vector"
+
+
 class simd(scope):
     """``with tla.scope.simd():`` -- SIMD vector-function region (vector core).
 
-    A manual vector function: the bishengir HFusion pipeline's outline-scope
-    (outlineMarkedScopesOnly=true) extracts it into ``func.func`` +
-    ``func.call``. ``hivm.vector_function`` + ``no_inline`` +
-    ``hivm.func_core_type<AIV>`` reproduce the attrs of a frontend-outlined VF
-    so the HIVM stage dispatches it; ``vector_mode`` marks the manual-VF scope
-    for the HFusion pass pipeline (HFusionVectorizeOps, AutoVectorize). No
-    ``hivm.vf_mode`` is set, keeping the SIMT path away.
+    Emitted as a manual vector function: the bishengir ``outline-scope`` pass
+    extracts this marked scope into ``func.func`` + ``func.call``. See
+    :meth:`mlir_attrs` for the role of each stamped attribute.
     """
 
     core_mode = "vector"
@@ -74,6 +85,7 @@ class simd(scope):
             "outline": builder.get_unit_attr(),
             "vector_mode": builder.get_string_attr("vec"),
             "hivm.func_core_type": builder.parse_attr("#hivm.func_core_type<AIV>"),
+            "hivm.vf_mode": builder.parse_attr("#hivm.vf_mode<SIMD>"),
             "hivm.vector_function": builder.get_unit_attr(),
         })
         return attrs
@@ -94,5 +106,6 @@ class cube(scope):
 
 
 # ``tla.scope`` resolves as the namespace holding the fixed-core-mode classes.
+scope.vector = vector
 scope.simd = simd
 scope.cube = cube

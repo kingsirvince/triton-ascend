@@ -19,14 +19,28 @@
 # THE SOFTWARE.
 """Cube-core primitives for TLA (hivm.hir.mmadL1).
 
-``mmad`` computes ``C = A x B (+C)`` with A=(M,K)/B=(K,N) in L1 and C in L0C,
-mirroring tilelang ascend's L1-path ``gemm`` (only ``transpose_b`` is exposed;
-``transpose_a`` folds into the GM->L1 copy and is out of v1 scope).
+``mmad`` computes ``C = A x B (+C)`` with A=(M,K)/B=(K,N) in L1 and C in L0C.
+Inputs may use logical 2-D shapes or physical 4-D NZ shapes. Only
+``transpose_b`` is exposed; ``transpose_a`` folds into the GM->L1 copy.
 """
 from triton.language.core import builtin, _unwrap_if_constexpr
 from .core import buffer
 
 __all__ = ["mmad"]
+
+
+def _logical_shape(shape):
+    """Logical (rows, cols) of a 2-D ND or 4-D zN operand.
+
+    A 4-D zN shape (cols/b1, rows/b0, b0, b1) maps to (rows=b0*shape[1],
+    cols=b1*shape[0]), the same convention npuir derives from a 4-D operand's
+    trailing two dims; 2-D ND shapes pass through unchanged.
+    """
+    if len(shape) == 2:
+        return shape
+    if len(shape) == 4:
+        return (shape[1] * shape[2], shape[0] * shape[3])
+    raise ValueError("tla.mmad buffers must be 2-D ND or 4-D zN")
 
 
 @builtin
@@ -39,11 +53,12 @@ def mmad(a, b, acc, transpose_b=False, clear_accum=False, _semantic=None):
         raise ValueError("tla.mmad acc must be an L0C buffer")
     if a.dtype != b.dtype:
         raise ValueError("tla.mmad a and b must have the same element type")
-    if len(a.shape) != 2 or len(b.shape) != 2 or len(acc.shape) != 2:
-        raise ValueError("tla.mmad expects 2-D buffers (M,K)/(K,N)/(M,N)")
-    m, k = a.shape
-    k2, n = b.shape
-    if k != k2 or acc.shape != (m, n):
+    # Each operand is checked independently: npuir accepts 2-D ND and 4-D NZ
+    # operands in any mix, and only the logical (M, K) / (K, N) / (M, N)
+    # dims must agree.
+    m, k = _logical_shape(a.shape)
+    k2, n = _logical_shape(b.shape)
+    if k != k2 or _logical_shape(acc.shape) != (m, n):
         raise ValueError("tla.mmad shape mismatch: a=(M,K), b=(K,N), acc=(M,N)")
     _semantic.builder.create_hivm_mmadl1(a.handle, b.handle, acc.handle, bool(_unwrap_if_constexpr(clear_accum)), m, k,
                                          n, bool(_unwrap_if_constexpr(transpose_b)))

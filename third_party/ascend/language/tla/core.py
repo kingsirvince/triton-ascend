@@ -36,13 +36,38 @@ def _row_major_strides(sizes):
     return tuple(strides)
 
 
+# Frontend space names; "gm"/"ub" map 1:1, the rest as in tla_builder.cc.
+SPACES = ("gm", "ub", "l1", "l0a", "l0b", "l0c")
+_HIVM_SCOPE = {"gm": "gm", "ub": "ub", "l1": "cbuf", "l0a": "ca", "l0b": "cb", "l0c": "cc"}
+
+
+def space_of(value):
+    """Frontend space of a TLA value, or None for scalars.
+
+    Resolves the enum on buffer/buffer_access and the printed
+    ``#hivm.address_space<...>`` type on IR values.
+    """
+    buf = getattr(value, "buffer", value)
+    space = getattr(buf, "space", None)
+    if space is not None:
+        return space
+    # IR values expose get_type(); host values carry .type.
+    ty = str(getattr(value, "type", None) or (value.get_type() if hasattr(value, "get_type") else None) or "")
+    return next((name for name, scope in _HIVM_SCOPE.items() if f"#hivm.address_space<{scope}>" in ty), None)
+
+
+def is_ub(value):
+    """True for scalars or UB-backed values."""
+    return space_of(value) in (None, "ub")
+
+
 class buffer_type(tl.base_type):
 
     def __init__(self, shape, dtype, space="gm", strides=None, offset=0):
         self.shape = _shape(shape)
         self.element_ty = tl._unwrap_if_constexpr(dtype)
         self.space = tl._unwrap_if_constexpr(space)
-        if self.space not in ("gm", "ub", "l1", "l0a", "l0b", "l0c"):
+        if self.space not in SPACES:
             raise ValueError(f"unsupported buffer space: {self.space}")
         if strides is None:
             strides = _row_major_strides(self.shape)

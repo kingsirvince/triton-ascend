@@ -87,6 +87,53 @@ Type resolveSimdElementType(MLIRContext *ctx, const py::object &elem) {
                               "\"; expected i8 / bf16 / f32 / fp8e4nv");
 }
 
+// Core type of the enclosing TLA core-mode scope, defaulting to the AIV
+// (vector) core that plain TLA kernels run on.
+hivm::TCoreType enclosingCoreType(OpBuilder &builder) {
+  Block *block = builder.getInsertionBlock();
+  for (Operation *op = block ? block->getParentOp() : nullptr; op;
+       op = op->getParentOp()) {
+    if (auto attr = op->getAttrOfType<hivm::TCoreTypeAttr>("hivm.tcore_type"))
+      return attr.getTcoretype();
+  }
+  return hivm::TCoreType::VECTOR;
+}
+
+// Resolve a frontend pipe name ("PIPE_MTE2") to its HIVM attribute.
+hivm::PipeAttr getSyncPipe(OpBuilder &builder, const std::string &pipe) {
+  auto pipeEnum = hivm::symbolizePIPE(pipe);
+  if (!pipeEnum)
+    throw std::invalid_argument("unknown sync pipe: " + pipe);
+  return hivm::PipeAttr::get(builder.getContext(), *pipeEnum);
+}
+
+// Validate a frontend constant against its hardware range [0, upper].
+int64_t checkSyncRange(int64_t value, int64_t upper, const char *what) {
+  if (value < 0 || value > upper)
+    throw std::invalid_argument(std::string(what) + " must be in [0, " +
+                                std::to_string(upper) + "]");
+  return value;
+}
+
+// Cross-core set/wait are block-level synchronization: emit them with the
+// block instruction mode requested by the frontend and the core type of the
+// enclosing TLA scope.
+void createBlockSync(TLABuilder &self, const std::string &pipe, int64_t flag,
+                     hivm::SyncBlockInstrMode instrMode, bool isSet) {
+  auto &builder = self.getBuilder();
+  auto *ctx = builder.getContext();
+  auto coreAttr = hivm::TCoreTypeAttr::get(ctx, enclosingCoreType(builder));
+  auto pipeAttr = getSyncPipe(builder, pipe);
+  auto flagAttr = builder.getI64IntegerAttr(checkSyncRange(flag, 15, "flag"));
+  auto modeAttr = hivm::SyncBlockInstrModeAttr::get(ctx, instrMode);
+  if (isSet)
+    self.create<hivm::SyncBlockSetOp>(coreAttr, pipeAttr, pipeAttr, flagAttr,
+                                      Value{}, modeAttr);
+  else
+    self.create<hivm::SyncBlockWaitOp>(coreAttr, pipeAttr, pipeAttr, flagAttr,
+                                       modeAttr);
+}
+
 // vload/masked_store indices must be index-typed.
 llvm::SmallVector<Value> toIndexValues(TLABuilder &self,
                                        std::vector<Value> &indices) {
@@ -153,6 +200,77 @@ void init_tla_builder(py::module &&m) {
             return VectorType::get({lanes}, elementType);
           },
           py::arg("lanes"), py::arg("element_type"))
+      // Intra-core pipeline synchronization.
+      .def(
+          "create_tla_barrier",
+          [](TLABuilder &self, const std::string &pipe) {
+            self.create<hivm::PipeBarrierOp>(
+                getSyncPipe(self.getBuilder(), pipe));
+          },
+          py::arg("pipe"))
+      .def(
+          "create_tla_set_flag",
+          [](TLABuilder &self, const std::string &pipe,
+             const std::string &waitPipe, int64_t eventId) {
+            auto *ctx = self.getBuilder().getContext();
+            self.create<hivm::SetFlagOp>(
+                getSyncPipe(self.getBuilder(), pipe),
+                getSyncPipe(self.getBuilder(), waitPipe),
+                hivm::EventAttr::get(
+                    ctx, static_cast<hivm::EVENT>(
+                             checkSyncRange(eventId, 7, "event_id"))),
+                Value{});
+          },
+          py::arg("pipe"), py::arg("wait_pipe"), py::arg("event_id"))
+      .def(
+          "create_tla_wait_flag",
+          [](TLABuilder &self, const std::string &pipe,
+             const std::string &waitPipe, int64_t eventId) {
+            auto *ctx = self.getBuilder().getContext();
+            self.create<hivm::WaitFlagOp>(
+                getSyncPipe(self.getBuilder(), pipe),
+                getSyncPipe(self.getBuilder(), waitPipe),
+                hivm::EventAttr::get(
+                    ctx, static_cast<hivm::EVENT>(
+                             checkSyncRange(eventId, 7, "event_id"))),
+                Value{});
+          },
+          py::arg("pipe"), py::arg("wait_pipe"), py::arg("event_id"))
+      // Hardware global barrier: AIV-only (false) or all AIC/AIV (true).
+      .def(
+          "create_tla_sync_all",
+          [](TLABuilder &self, bool allCores) {
+            auto *ctx = self.getBuilder().getContext();
+            auto pipeAll = hivm::PipeAttr::get(ctx, hivm::PIPE::PIPE_ALL);
+            auto syncMode = hivm::SyncBlockModeAttr::get(
+                ctx, allCores ? hivm::SyncBlockMode::ALL
+                              : hivm::SyncBlockMode::ALL_VECTOR);
+            self.create<hivm::SyncBlockOp>(
+                syncMode, IntegerAttr{}, Value{},
+                allCores ? pipeAll : hivm::PipeAttr{}, pipeAll);
+          },
+          py::arg("all_cores"))
+      // Cross-core FFTS flags: mode 0 inter-block / 1 inter-subblock /
+      // 2 intra-block. The wait has no mode and always waits on the flag.
+      .def(
+          "create_tla_block_set_flag",
+          [](TLABuilder &self, int mode, const std::string &pipe,
+             int64_t flag) {
+            createBlockSync(self, pipe, flag,
+                            static_cast<hivm::SyncBlockInstrMode>(
+                                checkSyncRange(mode, 2, "sync mode")),
+                            /*isSet=*/true);
+          },
+          py::arg("mode"), py::arg("pipe"), py::arg("flag"))
+      .def(
+          "create_tla_block_wait_flag",
+          [](TLABuilder &self, const std::string &pipe, int64_t flag) {
+            createBlockSync(
+                self, pipe, flag,
+                hivm::SyncBlockInstrMode::INTER_BLOCK_SYNCHRONIZATION,
+                /*isSet=*/false);
+          },
+          py::arg("pipe"), py::arg("flag"))
       // SIMD vector-register ops (AVE dialect, ave.hir.*).
       .def(
           "create_simd_vlds",
@@ -255,6 +373,10 @@ void init_tla_builder(py::module &&m) {
             }
             if (kind == "rsqrt") {
               return self.create<hivmave::VFRsqrtOp>(resTy, src, mask)
+                  .getResult();
+            }
+            if (kind == "exp") {
+              return self.create<hivmave::VFExpOp>(resTy, src, mask)
                   .getResult();
             }
             throw std::invalid_argument("unknown unary kind: " + kind);
@@ -579,6 +701,18 @@ void init_tla_builder(py::module &&m) {
                throw std::invalid_argument("TLA DMA requires memref operands");
              self.create<hivm::StoreOp>(TypeRange{}, src, dst);
            })
+      // Print at the buffer stage: hivm.hir.debug accepts memref/scalar
+      // operands directly, no tt.print detour.
+      .def(
+          "create_hivm_debug",
+          [](TLABuilder &self, std::string debugtype, std::string prefix,
+             bool hex, Value value) {
+            if (!value)
+              throw std::invalid_argument("TLA debug requires a value operand");
+            self.create<hivm::DebugOp>(debugtype, prefix, hex, value);
+          },
+          py::arg("debugtype"), py::arg("prefix"), py::arg("hex"),
+          py::arg("value"))
       // GM(ND) -> L1(NZ): dst_continuous is required by the mte2 library-call
       // path that nd2nz lowers into.
       .def(

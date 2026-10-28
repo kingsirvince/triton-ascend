@@ -69,6 +69,7 @@ __all__ = [
     "vneg",
     "vsqrt",
     "vrsqrt",
+    "vexp",
     "vreduce",
     "vcmp",
     "vbroadcast",
@@ -454,6 +455,17 @@ def vsqrt(src, _semantic=None) -> vector:
 def vrsqrt(src, _semantic=None) -> vector:
     """Elementwise reciprocal square root (``ave.hir.vrsqrt``)."""
     return _unary("rsqrt", src, _semantic)
+
+
+@builtin
+def vexp(src, _semantic=None) -> vector:
+    """
+    Elementwise exponential (``ave.hir.vexp``), e.g. for softmax.
+
+    :param src: source vector register
+    :return: ``exp(src)``, same shape as ``src``
+    """
+    return _unary("exp", src, _semantic)
 
 
 @builtin

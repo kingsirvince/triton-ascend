@@ -7,13 +7,14 @@ The Triton compiler patch merges ``TLA_WITH_DISPATCH`` into
 """
 
 from .code_generator import handle_scope_with
-from .scope import simd, cube
+from .scope import vector, simd, cube
 
 __all__ = ["TLA_WITH_DISPATCH"]
 
 # Registry of 'with' statement handlers for the TLA namespace, keyed by the
 # context-manager class itself.
 TLA_WITH_DISPATCH = {
+    vector: handle_scope_with,
     simd: handle_scope_with,
     cube: handle_scope_with,
 }

@@ -113,37 +113,48 @@ def _kernel_entries(module):
     return [op for op in operations if op.get_name() == "func.func" and op.get_str_attr("sym_visibility") != "private"]
 
 
-def _infer_kernel_mode(module, context):
-    """Set the kernel entry mix_mode from the module's cube-work markers.
+def infer_func_core_type(module):
+    """Infer AIC/AIV/MIX from scopes in a single-kernel module.
 
-    TritonToLinalgPass tags the entry "aiv" unless it finds TTIR dot /
-    hivm CustomOps; TLA cube kernels emit the cube op hivm.hir.mmadL1
-    directly (inside an inline scope.scope that outline-scope later marks
-    #hivm.func_core_type<AIC>, mirroring code_generator._vf_scope_attrs),
-    so they would reach npuir tagged "aiv". Correct the tag here so kernel
-    mode and the scope-level AIC/AIV tagging stay consistent: any cube work
-    -> "mix", otherwise keep the pass default "aiv".
+    The scope classes stamp ``#hivm.tcore_type<...>`` on the emitted
+    ``scope.scope`` ops (see :meth:`tla.scope.mlir_attrs`); the binding
+    exposes no generic attribute reader, so the printed module is parsed.
+    VECTOR -> AIV, CUBE -> AIC.
     """
-    has_cube = False
+    text = str(module)
+    core_types = set()
+    if "#hivm.tcore_type<CUBE>" in text:
+        core_types.add("AIC")
+    if "#hivm.tcore_type<VECTOR>" in text:
+        core_types.add("AIV")
+    if "AIC" in core_types and "AIV" in core_types:
+        return "MIX"
+    if "AIC" in core_types:
+        return "AIC"
+    if "AIV" in core_types:
+        return "AIV"
+    return None
 
-    def _collect(op):
-        nonlocal has_cube
-        if not has_cube and op.get_name() == "hivm.hir.mmadL1":
-            has_cube = True
 
-    module.walk(_collect)
-    if not has_cube:
-        return
+def _infer_kernel_mode(module, context):
+    """Stamp the entry core type and its corresponding backend launch mode."""
     from triton._C.libtriton.ascend import ir as ascend_ir
+
     entries = _kernel_entries(module)
     if len(entries) != 1:
         raise ValueError("expected exactly one public func.func kernel entry")
+    entry = entries[0]
+    core_type = infer_func_core_type(module)
+    if core_type is None:
+        return
     builder = ascend_ir.tla_builder(context, "")
-    builder.set_op_attr(entries[0], "mix_mode", builder.get_string_attr("mix"))
+    builder.set_op_attr(entry, "hivm.func_core_type", builder.parse_attr(f"#hivm.func_core_type<{core_type}>"))
+    builder.set_op_attr(entry, "mix_mode", builder.get_string_attr("aiv" if core_type == "AIV" else "mix"))
+    module.set_attr("hivm.module_core_type", builder.parse_attr(f"#hivm.module_core_type<{core_type}>"))
 
 
 def check_ttadapter(module):
-    """Validate the single-AIV-kernel boundary, not a runnable launcher ABI.
+    """Validate the single-kernel boundary, not a runnable launcher ABI.
 
     Operation checks use the IR walk. The two integer ABI attributes are
     checked on the canonical printed entry header because this binding exposes
