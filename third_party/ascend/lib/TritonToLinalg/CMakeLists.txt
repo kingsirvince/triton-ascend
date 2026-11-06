@@ -7,6 +7,7 @@ add_triton_library(TritonToLinalg
         HoistBroadcast.cpp
         BlockPtrAnalysis.cpp
         DescriptorConverter.cpp
+        LowerAddressValuePointers.cpp
         MarkTensorKindPass.cpp
         DevicePrintOffsetRewrite.cpp
         DeduplicateDebugNopsPass.cpp

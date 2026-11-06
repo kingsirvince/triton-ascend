@@ -388,6 +388,10 @@ def ttir_to_linalg(mod, metadata, opt, *, named_ops=True):
             distributed.ascend_passes.ttgpuir.add_convert_triton_distributed_to_hivm(pm)
 
         ascend.passes.ttir.add_triton_control_flow_opt(pm)
+        # A tensor of tt.int_to_ptr addresses has no memref form. Lower the
+        # data-flow-only cases to i64 here, before the unstructure/memory stages
+        # assume every pointer comes from a single base pointer.
+        ascend.passes.ttir.add_lower_address_value_pointers(pm)
         ascend.passes.ttir.add_triton_to_structure(pm, False, False, compile_on_910_95)
         ascend.passes.ttir.add_discrete_mask_access_conversion(pm, compile_on_910_95, compile_mode)
         ascend.passes.ttir.add_triton_to_annotation(pm)

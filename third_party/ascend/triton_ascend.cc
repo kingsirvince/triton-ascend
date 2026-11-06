@@ -20,6 +20,7 @@
 #include "ascend/include/TritonToHFusion/Passes.h"
 #include "ascend/include/TritonToHIVM/Passes.h"
 #include "ascend/include/TritonToLLVM/Passes.h"
+#include "ascend/include/TritonToLinalg/LowerAddressValuePointers.h"
 #include "ascend/include/TritonToLinalg/Passes.h"
 #include "ascend/include/TritonToStructured/Passes.h"
 #include "ascend/include/TritonToUnstructure/Passes.h"
@@ -60,6 +61,10 @@ namespace py = pybind11;
 using namespace mlir;
 
 void init_triton_ascend_passes_ttir(py::module &&m) {
+  m.def("add_lower_address_value_pointers", [](mlir::PassManager &pm) {
+    pm.addPass(mlir::triton::createLowerAddressValuePointersPass());
+  });
+
   m.def("add_auto_blockify", [](mlir::PassManager &pm, int autoBlockifySize) {
     AutoBlockifyOptions opts;
     opts.autoBlockifySize = autoBlockifySize;

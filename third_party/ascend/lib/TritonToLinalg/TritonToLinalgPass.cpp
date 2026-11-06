@@ -35,6 +35,7 @@
 #include "ascend/include/TritonToLinalg/FunctionConverter.h"
 #include "ascend/include/TritonToLinalg/HoistBroadcast.h"
 #include "ascend/include/TritonToLinalg/LoadStoreConverter.h"
+#include "ascend/include/TritonToLinalg/LowerAddressValuePointers.h"
 #include "ascend/include/TritonToLinalg/MarkTensorKindPass.h"
 #include "ascend/include/TritonToLinalg/TritonOpConverter.h"
 #include "ascend/include/TritonToLinalg/TritonToLinalgPass.h"
@@ -1925,6 +1926,14 @@ void TritonToLinalgPass::runOnOperation() {
   // provenance is opaque there. Inline them first, before any rewrite starts
   // depending on the call ABI.
   inlinePointerCarryingCallees(moduleOp);
+
+  // Address values (tensors of pointers built by tt.int_to_ptr) have no memref
+  // representation. Rewrite the ones that only take part in data flow into i64
+  // before the memory stage classifies pointer values.
+  if (failed(lowerAddressValuePointerTensors(moduleOp))) {
+    signalPassFailure();
+    return;
+  }
 
   // CUBE requirements affect normalization itself. SIMT requirements must also
   // account for indirect accesses introduced by that normalization.
